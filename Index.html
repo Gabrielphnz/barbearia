@@ -305,9 +305,10 @@
   let todosAgendamentos = [];
   let listaDeClientes = [];
   let clienteFichaAtual = {};
-  let produtosEstoque = [];
+  let produtosEstoque = []; 
+  let dadosFinanceirosAtuais = [];
   let configData = { precos: [], barbeiros: [], formasPagamento: [] };
-  let chartInst1, chartInst2, chartInst3; 
+  let chartInst1, chartInst2, chartInst3;
 
   // ==================== INICIALIZAÇÃO ====================
   function fazerLogin() {
@@ -467,7 +468,6 @@ function renderizarGraficos(graficos) {
   
 
   // ==================== FINANCEIRO ====================
-  let dadosFinanceirosAtuais = [];
   function carregarFinanceiro() {
     const i = document.getElementById('finDataInicio').value; const f = document.getElementById('finDataFim').value; const b = document.getElementById('finBarbeiro').value;
     document.querySelector('#tabelaFinanceiro tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando...</td></tr>';
