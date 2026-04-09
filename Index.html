@@ -508,24 +508,51 @@ function renderizarGraficos(graficos) {
   
 
  // ==================== FINANCEIRO ====================
+// ==================== FINANCEIRO ====================
   function carregarFinanceiro() {
-    // Limpa a barra de pesquisa sempre que recarregar
+    // Limpa a barra de pesquisa
     const inputBusca = document.getElementById('buscaFinanceiroGlob');
     if (inputBusca) inputBusca.value = '';
     
-    document.querySelector('#tabelaFinanceiro tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando todos os lançamentos...</td></tr>';
+    const tbody = document.querySelector('#tabelaFinanceiro tbody');
+    if(tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando todos os lançamentos...</td></tr>';
     
-    // Passa null em tudo para não filtrar na planilha e trazer todos os dados
+    // Passa null para trazer TUDO do banco, sem depender de filtros de tela
     google.script.run.withSuccessHandler(ts => { 
-      dadosFinanceirosAtuais = ts; 
-      renderizarTabelaFinanceiro(ts); 
+      dadosFinanceirosAtuais = ts || []; 
+      renderizarTabelaFinanceiro(dadosFinanceirosAtuais); 
     }).getDadosFinanceiros(null, null, null);
+  }
+
+  function renderizarTabelaFinanceiro(dados) {
+    const tbody = document.querySelector('#tabelaFinanceiro tbody');
+    if(!tbody) return;
+    tbody.innerHTML = '';
+    
+    if(!dados || dados.length === 0) { 
+       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Nenhum lançamento encontrado.</td></tr>'; 
+       return; 
+    }
+    
+    dados.forEach(t => {
+       // O botão de editar agora usa a linha real da planilha (t.linha)
+       tbody.innerHTML += `<tr>
+         <td>${t.data || '-'}</td>
+         <td><b>${t.cliente || '-'}</b></td>
+         <td>${t.servico || '-'}</td>
+         <td>${t.barbeiro || '-'}</td>
+         <td><span class="status-badge">${t.forma || '-'}</span></td>
+         <td style="color:#059669; font-weight:bold;">R$ ${parseFloat(t.valor || 0).toFixed(2)}</td>
+         <td><button class="btn btn-outline btn-sm" onclick="abrirEdicaoFinanceiro(${t.linha})"><i class="fas fa-edit"></i></button></td>
+       </tr>`;
+    });
   }
 
   function filtrarTabelaFinanceiroLocal() {
     const term = document.getElementById('buscaFinanceiroGlob').value.toLowerCase();
+    if(!dadosFinanceirosAtuais) return;
     
-    // Pesquisa em tempo real (Cliente, Serviço, Forma, Barbeiro e Data)
+    // Pesquisa dinamicamente em qualquer campo sem precisar recarregar
     const filtrados = dadosFinanceirosAtuais.filter(t => 
       (t.cliente || '').toLowerCase().includes(term) || 
       (t.servico || '').toLowerCase().includes(term) || 
@@ -537,22 +564,19 @@ function renderizarGraficos(graficos) {
     renderizarTabelaFinanceiro(filtrados);
   }
 
-  function renderizarTabelaFinanceiro(dados) {
-    const tbody = document.querySelector('#tabelaFinanceiro tbody'); tbody.innerHTML = '';
-    if(!dados || !dados.length) { tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Nenhum lançamento.</td></tr>'; return; }
-    dados.forEach((t, idx) => {
-       tbody.innerHTML += `<tr><td>${t.data}</td><td><b>${t.cliente}</b></td><td>${t.servico||'-'}</td><td>${t.barbeiro||'-'}</td><td><span class="status-badge">${t.forma}</span></td><td style="color:#059669; font-weight:bold;">R$ ${parseFloat(t.valor).toFixed(2)}</td><td><button class="btn btn-outline btn-sm" onclick="abrirEdicaoFinanceiro(${idx})"><i class="fas fa-edit"></i></button></td></tr>`;
-    });
-  }
-
-  function filtrarTabelaFinanceiroLocal() {
-    const term = document.getElementById('buscaFinanceiroGlob').value.toLowerCase();
-    renderizarTabelaFinanceiro(dadosFinanceirosAtuais.filter(t => (t.cliente||'').toLowerCase().includes(term) || (t.servico||'').toLowerCase().includes(term) || (t.forma||'').toLowerCase().includes(term)));
-  }
-
-  function abrirEdicaoFinanceiro(idx) {
-    const t = dadosFinanceirosAtuais[idx];
-    document.getElementById('editFinLinha').value = t.linha; document.getElementById('editFinData').value = t.data; document.getElementById('editFinBarbeiro').value = t.barbeiro; document.getElementById('editFinCliente').value = t.cliente; document.getElementById('editFinServico').value = t.servico; document.getElementById('editFinForma').value = t.forma; document.getElementById('editFinValor').value = t.valor;
+  function abrirEdicaoFinanceiro(linhaReal) {
+    // Procura na memória exatamente a linha correspondente, não importando a ordem da pesquisa
+    const t = dadosFinanceirosAtuais.find(item => item.linha === linhaReal);
+    if(!t) return;
+    
+    document.getElementById('editFinLinha').value = t.linha; 
+    document.getElementById('editFinData').value = t.data; 
+    document.getElementById('editFinBarbeiro').value = t.barbeiro; 
+    document.getElementById('editFinCliente').value = t.cliente; 
+    document.getElementById('editFinServico').value = t.servico; 
+    document.getElementById('editFinForma').value = t.forma; 
+    document.getElementById('editFinValor').value = t.valor;
+    
     document.getElementById('modalEditarFinanceiro').style.display = 'flex';
   }
 
