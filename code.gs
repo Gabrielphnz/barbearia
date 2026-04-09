@@ -507,119 +507,84 @@ function salvarProduto(produto, usuario) {
   else sheet.appendRow(novaLinha);
 }
 
-// ==================== DASHBOARD ANALYTICS (GRÁFICOS) ====================
+// ==================== DASHBOARD & GRÁFICOS ====================
 function getMetricasDashboard() {
   const financeiro = getDadosFinanceiros(null, null, null);
   const hojeDate = new Date();
   const hojeStr = Utilities.formatDate(hojeDate, Session.getScriptTimeZone(), "dd/MM/yyyy");
   
-  let faturamentoHoje = 0;
-  let faturamentoMes = 0;
-  let cortesMaisVendidos = {};
-  let rankingBarbeiros = {};
+  let faturamentoHoje = 0, faturamentoMes = 0;
+  let cortesMaisVendidos = {}, rankingBarbeiros = {};
   let clientesAtendidos = new Set();
-  
- let mesesMap = new Map(); // chave "MM/AAAA"
-financeiro.forEach(t => {
-  if (t.data) {
-    let partes = t.data.split('/');
-    if (partes.length === 3) {
-      let mesAno = `${partes[1]}/${partes[2]}`;
-      mesesMap.set(mesAno, (mesesMap.get(mesAno) || 0) + (t.valor || 0));
-    }
-  }
-});
-// ordenar e pegar últimos 6 meses
-let entradas = Array.from(mesesMap.entries()).sort((a,b) => {
-  let [ma, ya] = a[0].split('/'), [mb, yb] = b[0].split('/');
-  return new Date(ya, ma-1) - new Date(yb, mb-1);
-});
-let ultimos = entradas.slice(-6);
-let faturamentoMensalChart = { labels: ultimos.map(e => e[0]), dados: ultimos.map(e => e[1]) };
+  let faturamentoMensalChart = { labels: [], dados: [] };
+  let mesesMap = {};
 
   financeiro.forEach(t => {
-    // Totais Básicos
     if (t.data === hojeStr) faturamentoHoje += t.valor || 0;
     
     if(t.data) {
       const dataTrans = t.data.split('/');
       if (dataTrans.length === 3) {
-        const mesTrans = dataTrans[1];
-        const anoTrans = dataTrans[2];
-        const mesAno = `${mesTrans}/${anoTrans}`;
+        const mesTrans = dataTrans[1], anoTrans = dataTrans[2], mesAno = `${mesTrans}/${anoTrans}`;
         
         if (parseInt(mesTrans) === (hojeDate.getMonth() + 1) && parseInt(anoTrans) === hojeDate.getFullYear()) {
           faturamentoMes += t.valor || 0;
           if (t.cliente && t.cliente !== 'Venda Avulsa') clientesAtendidos.add(t.cliente);
         }
 
-        // Gráfico de Faturamento (Soma por Mês/Ano)
-        if(!mesesMap[mesAno]) mesesMap[mesAno] = 0;
+        // Soma os valores por mês para o Gráfico de Linha
+        if(!mesesMap[mesAno]) mesesMap[mesAno] = 0; 
         mesesMap[mesAno] += t.valor || 0;
       }
     }
 
-    // Top Cortes/Serviços
-    if (t.servico) {
-      if(!cortesMaisVendidos[t.servico]) cortesMaisVendidos[t.servico] = 0;
-      cortesMaisVendidos[t.servico]++;
+    // Conta os serviços para o Gráfico de Pizza
+    if (t.servico) { 
+      if(!cortesMaisVendidos[t.servico]) cortesMaisVendidos[t.servico] = 0; 
+      cortesMaisVendidos[t.servico]++; 
     }
 
-let servicosOrdenados = Object.entries(cortesMaisVendidos)
-  .map(([nome, qtd]) => [nome, Number(qtd) || 0])
-  .filter(([, qtd]) => qtd > 0)
-  .sort((a, b) => b[1] - a[1])
-  .slice(0, 5);
-
-let chartServicos = {
-  labels: servicosOrdenados.map(s => s[0]),
-  dados: servicosOrdenados.map(s => s[1])
-};
-
-    // Top Barbeiros
-    if (t.barbeiro) {
-      if(!rankingBarbeiros[t.barbeiro]) rankingBarbeiros[t.barbeiro] = 0;
-      rankingBarbeiros[t.barbeiro] += t.valor || 0;
+    // Soma o faturamento por barbeiro para o Gráfico de Barras
+    if (t.barbeiro) { 
+      if(!rankingBarbeiros[t.barbeiro]) rankingBarbeiros[t.barbeiro] = 0; 
+      rankingBarbeiros[t.barbeiro] += t.valor || 0; 
     }
   });
 
-  // Prepara dados pro Chart.js (Faturamento Mensal ordenado)
-  const sortedMeses = Object.keys(mesesMap).sort((a, b) => {
-    let [ma, ya] = a.split('/'); let [mb, yb] = b.split('/');
-    return new Date(ya, ma - 1) - new Date(yb, mb - 1);
-  }).slice(-6); // Pega os últimos 6 meses
-
-  sortedMeses.forEach(m => {
-    faturamentoMensalChart.labels.push(m);
-    faturamentoMensalChart.dados.push(mesesMap[m]);
+  // Ordena os meses cronologicamente (pega os últimos 6)
+  const sortedMeses = Object.keys(mesesMap).sort((a, b) => { 
+    let [ma, ya] = a.split('/'); let [mb, yb] = b.split('/'); 
+    return new Date(ya, ma - 1) - new Date(yb, mb - 1); 
+  }).slice(-6);
+  
+  sortedMeses.forEach(m => { 
+    faturamentoMensalChart.labels.push(m); 
+    faturamentoMensalChart.dados.push(mesesMap[m]); 
   });
 
-  // Prepara Pizza (Top 5 Serviços)
   let servicosOrdenados = Object.entries(cortesMaisVendidos).sort((a,b) => b[1] - a[1]).slice(0,5);
   let chartServicos = { labels: servicosOrdenados.map(s => s[0]), dados: servicosOrdenados.map(s => s[1]) };
 
-  // Prepara Barras (Ranking Barbeiros)
   let barbeirosOrdenados = Object.entries(rankingBarbeiros).sort((a,b) => b[1] - a[1]);
   let chartBarbeiros = { labels: barbeirosOrdenados.map(b => b[0]), dados: barbeirosOrdenados.map(b => b[1]) };
 
   const ticketMedio = clientesAtendidos.size > 0 ? (faturamentoMes / clientesAtendidos.size) : 0;
-  
-  const produtos = getProdutos();
-  const baixoEstoque = produtos.filter(p => (p['ESTOQUE ATUAL'] || 0) <= (p['ESTOQUE MINIMO'] || 0)).map(p => p.PRODUTO);
 
+  // Retorna os dados E a variável graficos que faltava
   return { 
     faturamentoHoje, 
     faturamentoMes, 
     ticketMedio, 
-    clientesUnicosMes: clientesAtendidos.size,
-    baixoEstoque,
-    graficos: {
-      faturamentoMensal: faturamentoMensalChart,
-      topServicos: chartServicos,
-      topBarbeiros: chartBarbeiros
-    }
+    clientesUnicosMes: clientesAtendidos.size, 
+    baixoEstoque: [], 
+    graficos: { 
+      faturamentoMensal: faturamentoMensalChart, 
+      topServicos: chartServicos, 
+      topBarbeiros: chartBarbeiros 
+    } 
   };
 }
+
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
