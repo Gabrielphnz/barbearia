@@ -319,15 +319,17 @@ function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
       let h = String(headers[j]).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
       let val = data[i][j];
       
+      // BLINDAGEM: Converte TUDO para texto (String) antes de enviar para a tela
       if (h === 'DATA') {
         if (val instanceof Date) { dataTransacao = val; t.data = Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy"); } 
         else if (typeof val === 'string') { let p = val.split('/'); if (p.length === 3) dataTransacao = new Date(`${p[2]}-${p[1]}-${p[0]}`); t.data = val; }
+        else { t.data = String(val); }
       }
-      else if (h === 'CLIENTES' || h === 'CLIENTE') t.cliente = val;
-      else if (h === 'BARBEIRO') t.barbeiro = val;
-      else if (h === 'TIPO DE CORTE' || h === 'SERVICO') t.servico = val;
-      else if (h.includes('FORMA DE PAG')) t.forma = val;
-      else if (h === 'ID CONTROLE') t.id = val;
+      else if (h === 'CLIENTES' || h === 'CLIENTE') t.cliente = String(val);
+      else if (h === 'BARBEIRO') t.barbeiro = String(val);
+      else if (h === 'TIPO DE CORTE' || h === 'SERVICO') t.servico = String(val);
+      else if (h.includes('FORMA DE PAG')) t.forma = String(val);
+      else if (h === 'ID CONTROLE') t.id = String(val);
     }
     
     if (idxValor !== -1) {
@@ -344,6 +346,7 @@ function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
   }
   return transacoes;
 }
+
 
 function atualizarEdicaoFinanceiro(dadosLancamento) {
   const sheet = getSheetFinanceiro();
@@ -585,6 +588,56 @@ function getMetricasDashboard() {
   };
 }
 
+// NOVO: Exclusão de Financeiro integrada com Agenda
+function excluirLancamentoFinanceiro(linha, idControle) {
+  const sheetFin = getSheetFinanceiro();
+  if (!sheetFin) return { success: false, msg: 'Aba financeiro não encontrada' };
+
+  // 1. Deleta a linha do financeiro
+  sheetFin.deleteRow(linha);
+
+  let temAgenda = false;
+
+  // 2. Se esse lançamento veio da agenda, desfaz o status
+  if (idControle && String(idControle).trim() !== '') {
+    const sheetAgenda = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
+    if (sheetAgenda) {
+      const dataAgenda = sheetAgenda.getDataRange().getValues();
+      const headersAgenda = dataAgenda[0].map(h => String(h).toUpperCase().trim());
+      const colId = headersAgenda.indexOf('ID');
+      const colStatus = headersAgenda.indexOf('STATUS');
+
+      if (colId !== -1 && colStatus !== -1) {
+        // i = 1 para pular o cabeçalho
+        for (let i = 1; i < dataAgenda.length; i++) {
+          if (String(dataAgenda[i][colId]) === String(idControle)) {
+            // Reverte o status
+            sheetAgenda.getRange(i + 1, colStatus + 1).setValue('Agendado');
+            temAgenda = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return { success: true, temAgenda: temAgenda, idAgenda: idControle };
+}
+
+// ==================== EVOLUÇÃO / HISTÓRICO ====================
+function registrarEvolucao(cliente, barbeiro, estilo, observacoes) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.EVOLUCAO);
+  if (sheet) {
+    sheet.appendRow([
+      new Date().getTime(), 
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy"), 
+      cliente, 
+      barbeiro, 
+      estilo, 
+      observacoes
+    ]);
+  }
+}
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
