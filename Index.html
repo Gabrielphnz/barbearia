@@ -127,19 +127,27 @@
         <div class="charts-grid">
           <div class="chart-container">
             <h4 style="margin-bottom: 15px; color: #475569;">Faturamento Mensal (Últimos 6 meses)</h4>
-            <canvas id="chartFaturamento" height="100"></canvas>
+            <div style="position: relative; height: 250px; width: 100%;">
+              <canvas id="chartFaturamento"></canvas>
+            </div>
           </div>
           <div class="chart-container">
             <h4 style="margin-bottom: 15px; color: #475569;">Serviços Mais Vendidos</h4>
-            <canvas id="chartServicos" height="200"></canvas>
+            <div style="position: relative; height: 250px; width: 100%;">
+              <canvas id="chartServicos"></canvas>
+            </div>
           </div>
         </div>
+        
         <div class="charts-grid" style="grid-template-columns: 1fr;">
           <div class="chart-container">
-             <h4 style="margin-bottom: 15px; color: #475569;">Ranking de Faturamento por Barbeiro</h4>
-             <canvas id="chartBarbeiros" height="80"></canvas>
+             <h4 style="margin-bottom: 15px; color: #475569;">Ranking por Barbeiro</h4>
+             <div style="position: relative; height: 250px; width: 100%;">
+               <canvas id="chartBarbeiros"></canvas>
+             </div>
           </div>
         </div>
+          </div>
       </div>
 
       <div id="pageAgenda" class="page-content" style="display:none;">
@@ -409,56 +417,33 @@
       }
     }).getMetricasDashboard();
   }
-
- function renderizarGraficos(graficos) {
-    // Blindagem anti-crash: se a biblioteca não carregar, ele aborta em silêncio
+  
+function renderizarGraficos(graficos) {
     if (typeof Chart === 'undefined') {
       console.warn("Biblioteca de gráficos não carregada.");
       return;
     }
     if (!graficos) return;
 
-    // Destrói os gráficos antigos antes de desenhar novos (evita sobreposição)
     if(window.chartInst1) window.chartInst1.destroy(); 
     if(window.chartInst2) window.chartInst2.destroy(); 
     if(window.chartInst3) window.chartInst3.destroy();
 
-    // 1. Gráfico de Faturamento (Linha)
     const cv1 = document.getElementById('chartFaturamento');
     if (cv1 && graficos.faturamentoMensal) {
       window.chartInst1 = new Chart(cv1.getContext('2d'), { 
         type: 'line', 
-        data: { 
-          labels: graficos.faturamentoMensal.labels, 
-          datasets: [{ label: 'Faturamento (R$)', data: graficos.faturamentoMensal.dados, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.3 }] 
-        }, 
-        options: { responsive: true, plugins: { legend: { display: false } } } 
+        data: { labels: graficos.faturamentoMensal.labels, datasets: [{ label: 'Faturamento (R$)', data: graficos.faturamentoMensal.dados, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.3 }] }, 
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } } 
       });
     }
 
-    // 2. Gráfico de pizza (serviços) – O SEU CÓDIGO EXCELENTE
     const cv2 = document.getElementById('chartServicos');
     if (cv2 && graficos.topServicos) {
       let labels = graficos.topServicos.labels || [];
-      let dados = (graficos.topServicos.dados || []).map(v => {
-        let num = Number(v);
-        return isNaN(num) || !isFinite(num) ? 0 : num;
-      });
-      
-      // Remove entradas com valor zero
-      const filtered = labels.reduce((acc, label, idx) => {
-        if (dados[idx] > 0) {
-          acc.labels.push(label);
-          acc.dados.push(dados[idx]);
-        }
-        return acc;
-      }, { labels: [], dados: [] });
-      
-      // Fallback se não tiver vendas
-      if (filtered.labels.length === 0) {
-        filtered.labels = ['Sem dados'];
-        filtered.dados = [1];
-      }
+      let dados = (graficos.topServicos.dados || []).map(v => { let num = Number(v); return isNaN(num) || !isFinite(num) ? 0 : num; });
+      const filtered = labels.reduce((acc, label, idx) => { if (dados[idx] > 0) { acc.labels.push(label); acc.dados.push(dados[idx]); } return acc; }, { labels: [], dados: [] });
+      if (filtered.labels.length === 0) { filtered.labels = ['Sem dados']; filtered.dados = [1]; }
       
       window.chartInst2 = new Chart(cv2.getContext('2d'), {
         type: 'doughnut',
@@ -467,7 +452,6 @@
       });
     }
 
-    // 3. Gráfico de barbeiros – O SEU CÓDIGO EXCELENTE
     const cv3 = document.getElementById('chartBarbeiros');
     if (cv3 && graficos.topBarbeiros) {
       const labels = graficos.topBarbeiros.labels || [];
@@ -475,10 +459,11 @@
       window.chartInst3 = new Chart(cv3.getContext('2d'), {
         type: 'bar',
         data: { labels: labels, datasets: [{ label: 'Faturamento (R$)', data: dados, backgroundColor: '#3b82f6' }] },
-        options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
       });
     }
   }
+
   
 
   // ==================== FINANCEIRO ====================
