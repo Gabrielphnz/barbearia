@@ -14,7 +14,7 @@
     body { font-family: 'Inter', sans-serif; background: #f0f2f5; color: #1e293b; }
     .app-container { display: flex; }
     
-    .sidebar { width: 280px; background: white; border-radius: 24px; margin: 20px 0 20px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding: 24px 16px; height: calc(100vh - 40px); position: fixed; overflow-y: auto; }
+      .sidebar { width: 280px; background: white; border-radius: 24px; margin: 20px 0 20px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding: 24px 16px; height: calc(100vh - 40px); position: fixed; top: 0; left: 0; z-index: 1000; overflow-y: auto; }
     .logo-area { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
     .logo-area i { font-size: 32px; color: #667eea; }
     .logo-area h1 { font-size: 22px; font-weight: 700; }
@@ -84,6 +84,54 @@
     .config-list { list-style: none; padding: 0; margin-top: 10px; }
     .config-list li { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; }
     .dados-pessoais-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ================= NOVO DESIGN DA AGENDA ================= */
+    .agenda-semana-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 16px;
+      overflow-x: auto;
+      padding-bottom: 10px;
+    }
+    .agenda-dia-coluna {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 12px;
+      min-width: 250px; /* Garante que as colunas não se esmaguem */
+    }
+    .mini-card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border-left: 4px solid #667eea;
+    }
+    .agenda-mes-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 12px;
+    }
+    .calendario-box {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      height: 110px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .calendario-box:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+      border-color: #667eea;
+    }
+    .calendario-vazio { background: transparent; border: none; }
   </style>
 </head>
 <body>
@@ -202,24 +250,18 @@
 
       <div id="pageFinanceiro" class="page-content" style="display:none;">
         <div class="card">
-          <div class="card-header"><h2><i class="fas fa-wallet"></i> Gestão Financeira</h2></div>
-          <div class="layout-lateral">
-            <div class="sidebar-filtros">
-              <h4 style="margin-bottom: 16px; color: #475569;"><i class="fas fa-filter"></i> Filtros</h4>
-              <div class="form-field"><label>Data Início</label><input type="date" id="finDataInicio"></div>
-              <div class="form-field"><label>Data Fim</label><input type="date" id="finDataFim"></div>
-              <div class="form-field"><label>Barbeiro</label><select id="finBarbeiro"><option value="">Todos</option></select></div>
-              <button class="btn btn-primary" style="width: 100%; margin-top: 10px;" onclick="carregarFinanceiro()">Aplicar Filtro</button>
-            </div>
-            <div class="conteudo-tabela">
-              <input type="text" id="buscaFinanceiroGlob" class="search-bar" placeholder="🔍 Buscar na tabela por Cliente, Serviço ou Pagamento..." onkeyup="filtrarTabelaFinanceiroLocal()">
-              <div style="overflow-x: auto;">
-                <table id="tabelaFinanceiro">
-                  <thead><tr><th>Data</th><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Pagamento</th><th>Valor</th><th>Ação</th></tr></thead>
-                  <tbody></tbody>
-                </table>
-              </div>
-            </div>
+          <div class="card-header">
+            <h2><i class="fas fa-wallet"></i> Gestão Financeira</h2>
+            <button class="btn btn-outline btn-sm" onclick="carregarFinanceiro()"><i class="fas fa-sync-alt"></i> Recarregar Dados</button>
+          </div>
+          
+          <input type="text" id="buscaFinanceiroGlob" class="search-bar" placeholder="🔍 Pesquise dinamicamente por Cliente, Serviço, Barbeiro, Data ou Pagamento..." onkeyup="filtrarTabelaFinanceiroLocal()">
+          
+          <div style="overflow-x: auto;">
+            <table id="tabelaFinanceiro">
+              <thead><tr><th>Data</th><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Pagamento</th><th>Valor</th><th>Ação</th></tr></thead>
+              <tbody></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -467,11 +509,34 @@ function renderizarGraficos(graficos) {
 
   
 
-  // ==================== FINANCEIRO ====================
+ // ==================== FINANCEIRO ====================
   function carregarFinanceiro() {
-    const i = document.getElementById('finDataInicio').value; const f = document.getElementById('finDataFim').value; const b = document.getElementById('finBarbeiro').value;
-    document.querySelector('#tabelaFinanceiro tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando...</td></tr>';
-    google.script.run.withSuccessHandler(ts => { dadosFinanceirosAtuais = ts; renderizarTabelaFinanceiro(ts); }).getDadosFinanceiros(i, f, b);
+    // Limpa a barra de pesquisa sempre que recarregar
+    const inputBusca = document.getElementById('buscaFinanceiroGlob');
+    if (inputBusca) inputBusca.value = '';
+    
+    document.querySelector('#tabelaFinanceiro tbody').innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando todos os lançamentos...</td></tr>';
+    
+    // Passa null em tudo para não filtrar na planilha e trazer todos os dados
+    google.script.run.withSuccessHandler(ts => { 
+      dadosFinanceirosAtuais = ts; 
+      renderizarTabelaFinanceiro(ts); 
+    }).getDadosFinanceiros(null, null, null);
+  }
+
+  function filtrarTabelaFinanceiroLocal() {
+    const term = document.getElementById('buscaFinanceiroGlob').value.toLowerCase();
+    
+    // Pesquisa em tempo real (Cliente, Serviço, Forma, Barbeiro e Data)
+    const filtrados = dadosFinanceirosAtuais.filter(t => 
+      (t.cliente || '').toLowerCase().includes(term) || 
+      (t.servico || '').toLowerCase().includes(term) || 
+      (t.forma || '').toLowerCase().includes(term) ||
+      (t.barbeiro || '').toLowerCase().includes(term) ||
+      (t.data || '').toLowerCase().includes(term)
+    );
+    
+    renderizarTabelaFinanceiro(filtrados);
   }
 
   function renderizarTabelaFinanceiro(dados) {
@@ -558,12 +623,174 @@ function renderizarGraficos(graficos) {
   document.getElementById('formClienteCompleto').addEventListener('submit', e => { e.preventDefault(); const d = { ID: document.getElementById('formCliId').value, Nome: document.getElementById('formCliNome').value, Apelido: document.getElementById('formCliApelido').value, Celular: document.getElementById('formCliCelular').value, CPF: document.getElementById('formCliCpf').value, Nascimento: document.getElementById('formCliNasc').value, Email: document.getElementById('formCliEmail').value, Endereco: document.getElementById('formCliEnd').value, Bairro: document.getElementById('formCliBairro').value, Cidade: document.getElementById('formCliCidade').value, Obs: document.getElementById('formCliObs').value }; Swal.fire({ title: 'Salvando...', didOpen:()=>Swal.showLoading() }); google.script.run.withSuccessHandler(r => { fecharModal('modalClienteForm'); Swal.fire('Salvo!', '', 'success'); document.getElementById('agendaCliente').value = r.clienteNome; carregarClientesGlobal(); }).salvarClienteCompleto(d, usuarioAtual.nome); });
 
   function carregarDadosAgenda() { google.script.run.withSuccessHandler(d => { todosAgendamentos = d; renderizarAgenda(); }).getAgendamentos(); }
-  function renderizarAgenda() { const dtF = document.getElementById('filtroData').value; const vis = document.getElementById('filtroVisao').value; const cont = document.getElementById('listaAgendamentos'); cont.innerHTML = ''; if(!dtF) return; const dRef = new Date(dtF+'T00:00:00'); let dias = vis==='semanal'?7:vis==='mensal'?30:1; const dLim = new Date(dRef); dLim.setDate(dRef.getDate()+dias-1); const f = todosAgendamentos.filter(ag => { const d = new Date(ag.data+'T00:00:00'); return d>=dRef && d<=dLim; }); if(!f.length) return cont.innerHTML = '<div style="text-align:center; padding:40px;">Nenhum agendamento.</div>'; const agr = {}; f.forEach(ag => { if(!agr[ag.data]) agr[ag.data]=[]; agr[ag.data].push(ag); }); Object.keys(agr).sort().forEach(dt => { cont.innerHTML += `<div style="margin-top:20px; font-weight:bold; color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:5px;"><i class="far fa-calendar-alt"></i> ${dt.split('-').reverse().join('/')}</div>`; agr[dt].forEach(ag => { let btnChk = ag.status!=='Concluído'&&ag.status!=='Cancelado' ? `<button class="btn btn-success btn-sm" onclick='abrirCheckout(${JSON.stringify(ag)})'><i class="fas fa-check"></i></button>` : ''; let btnWpp = ''; if(ag.celular) { let n = String(ag.celular).replace(/\\D/g,''); if(n.length===10||n.length===11) n='55'+n; let m = encodeURIComponent(`Olá ${ag.cliente}, tudo bem? Passando para confirmar seu agendamento de ${ag.servico} com ${ag.barbeiro} no dia ${dt.split('-').reverse().join('/')} às ${ag.hora}.`); btnWpp = `<a href="https://wa.me/${n}?text=${m}" target="_blank" class="btn btn-outline btn-sm" style="color: #10b981;"><i class="fab fa-whatsapp"></i></a>`; } let cb = ag.status==='Concluído'?'#d1fae5':ag.status==='Cancelado'?'#fee2e2':'#dbeafe'; let ctb = ag.status==='Concluído'?'#065f46':ag.status==='Cancelado'?'#991b1b':'#1e40af'; cont.innerHTML += `<div class="agenda-card"><div style="display:flex; gap:15px; align-items:center;"><div class="agenda-hora">${ag.hora}</div><div><h4 style="margin:0;">${ag.cliente} <span class="status-badge" style="background:${cb}; color:${ctb};">${ag.status}</span></h4><p style="margin:0; font-size:13px; color:#64748b;">${ag.servico} | ${ag.barbeiro}</p></div></div><div style="display:flex; gap:8px;">${btnWpp}<button class="btn btn-outline btn-sm" style="color:#ef4444;" onclick="deletarAgendamento('${ag.id}')"><i class="fas fa-trash"></i></button><button class="btn btn-outline btn-sm" onclick='editarAgendamento(${JSON.stringify(ag)})'><i class="fas fa-edit"></i></button>${btnChk}</div></div>`; }); }); }
+  
+  // Função auxiliar para o calendário mensal (clicar no dia e ir para ele)
+  window.mudarParaDia = function(dataStr) {
+    document.getElementById('filtroData').value = dataStr;
+    document.getElementById('filtroVisao').value = 'diario';
+    renderizarAgenda();
+  };
+
+  function renderizarAgenda() {
+    const dataFiltroStr = document.getElementById('filtroData').value;
+    const visao = document.getElementById('filtroVisao').value;
+    const container = document.getElementById('listaAgendamentos');
+    container.innerHTML = '';
+    if (!dataFiltroStr) return;
+
+    const dataRef = new Date(dataFiltroStr + 'T00:00:00');
+
+    // ================= VISÃO DIÁRIA (LISTA CLÁSSICA) =================
+    if (visao === 'diario') {
+      const filtrados = todosAgendamentos.filter(ag => ag.data === dataFiltroStr);
+      if (filtrados.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding: 40px; color: #94a3b8;"><i class="far fa-calendar-times" style="font-size: 32px; margin-bottom: 10px;"></i><br>Nenhum agendamento para este dia.</div>`;
+        return;
+      }
+      
+      const dataFormatada = dataFiltroStr.split('-').reverse().join('/');
+      container.innerHTML = `<div style="margin-top:10px; font-weight:bold; color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:5px;"><i class="far fa-calendar-alt"></i> ${dataFormatada}</div>`;
+      
+      filtrados.sort((a, b) => a.hora.localeCompare(b.hora)).forEach(ag => {
+        let btnCheckout = ag.status !== 'Concluído' && ag.status !== 'Cancelado' ? `<button class="btn btn-success btn-sm" onclick='abrirCheckout(${JSON.stringify(ag)})' title="Finalizar"><i class="fas fa-check"></i></button>` : '';
+        
+        let btnWhatsApp = '';
+        if(ag.celular) {
+          let numeroLimpo = String(ag.celular).replace(/\D/g, '');
+          if (numeroLimpo.length === 10 || numeroLimpo.length === 11) numeroLimpo = '55' + numeroLimpo;
+          let msg = encodeURIComponent(`Olá ${ag.cliente}, tudo bem? Passando para confirmar seu agendamento de ${ag.servico} com ${ag.barbeiro} no dia ${dataFormatada} às ${ag.hora}.`);
+          btnWhatsApp = `<a href="https://wa.me/${numeroLimpo}?text=${msg}" target="_blank" class="btn btn-outline btn-sm" style="color: #10b981; border-color: #a7f3d0;"><i class="fab fa-whatsapp"></i></a>`;
+        }
+
+        let corBadge = ag.status === 'Concluído' ? '#d1fae5' : (ag.status === 'Cancelado' ? '#fee2e2' : '#dbeafe');
+        let corTextoBadge = ag.status === 'Concluído' ? '#065f46' : (ag.status === 'Cancelado' ? '#991b1b' : '#1e40af');
+
+        container.innerHTML += `
+          <div class="agenda-card">
+            <div style="display:flex; gap:15px; align-items:center;">
+              <div class="agenda-hora">${ag.hora}</div>
+              <div>
+                <h4 style="margin:0;">${ag.cliente} <span class="status-badge" style="background:${corBadge}; color:${corTextoBadge};">${ag.status}</span></h4>
+                <p style="margin:0; font-size:13px; color:#64748b;">${ag.servico} | ${ag.barbeiro}</p>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              ${btnWhatsApp}
+              <button class="btn btn-outline btn-sm" style="color: #ef4444; border-color: #fca5a5;" onclick="deletarAgendamento('${ag.id}')"><i class="fas fa-trash"></i></button>
+              <button class="btn btn-outline btn-sm" onclick='editarAgendamento(${JSON.stringify(ag)})'><i class="fas fa-edit"></i></button>
+              ${btnCheckout}
+            </div>
+          </div>
+        `;
+      });
+    } 
+    
+    // ================= VISÃO SEMANAL (7 COLUNAS) =================
+    else if (visao === 'semanal') {
+      const domingo = new Date(dataRef);
+      domingo.setDate(domingo.getDate() - domingo.getDay()); // Acha o domingo da semana atual
+
+      let html = '<div class="agenda-semana-grid">';
+      
+      for (let i = 0; i < 7; i++) {
+        const diaAtual = new Date(domingo);
+        diaAtual.setDate(domingo.getDate() + i);
+        const diaStr = diaAtual.toISOString().split('T')[0];
+        const diaFormatado = diaAtual.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).toUpperCase();
+        
+        const agsDoDia = todosAgendamentos.filter(ag => ag.data === diaStr);
+        
+        // Verifica se é o dia selecionado para dar um destaque visual
+        const isHoje = (diaStr === dataFiltroStr) ? 'border-color: #667eea; background: #ebf4ff;' : '';
+
+        html += `<div class="agenda-dia-coluna" style="${isHoje}">`;
+        html += `<h4 style="text-align: center; margin-bottom: 15px; color: #475569; font-size: 13px;">${diaFormatado}</h4>`;
+        
+        if (agsDoDia.length === 0) {
+          html += `<div style="text-align: center; color: #94a3b8; font-size: 12px; padding: 20px 0;">Livre</div>`;
+        } else {
+          agsDoDia.sort((a, b) => a.hora.localeCompare(b.hora)).forEach(ag => {
+            let corBorda = ag.status === 'Concluído' ? '#10b981' : (ag.status === 'Cancelado' ? '#ef4444' : '#667eea');
+            html += `
+              <div class="mini-card" style="border-left-color: ${corBorda}; cursor: pointer;" onclick='editarAgendamento(${JSON.stringify(ag)})'>
+                <div style="font-weight: 800; font-size: 15px; color: ${corBorda}; margin-bottom: 4px;">${ag.hora}</div>
+                <div style="font-weight: 600; font-size: 13px; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ag.cliente.split(' ')[0]}</div>
+                <div style="font-size: 11px; color: #64748b;">${ag.barbeiro}</div>
+              </div>
+            `;
+          });
+        }
+        html += `</div>`;
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // ================= VISÃO MENSAL (CALENDÁRIO) =================
+    else if (visao === 'mensal') {
+      const ano = dataRef.getFullYear();
+      const mes = dataRef.getMonth();
+      const primeiroDia = new Date(ano, mes, 1);
+      const ultimoDia = new Date(ano, mes + 1, 0);
+      const diasNoMes = ultimoDia.getDate();
+      const startDayOfWeek = primeiroDia.getDay(); // 0 a 6
+      const VAGAS_POR_DIA = 10; // <<--- Altere aqui o número médio de vagas diárias da barbearia
+
+      let html = `<div style="text-align:center; font-weight:800; font-size: 20px; margin-bottom: 20px; color: #1e293b; text-transform: uppercase;">
+                    <i class="far fa-calendar"></i> ${primeiroDia.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                  </div>`;
+                  
+      html += '<div class="agenda-mes-grid">';
+      
+      const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+      diasSemana.forEach(d => {
+         html += `<div style="text-align: center; font-weight: 700; color: #64748b; font-size: 13px;">${d}</div>`;
+      });
+
+      // Espaços vazios antes do dia 1
+      for (let i = 0; i < startDayOfWeek; i++) {
+         html += `<div class="calendario-vazio"></div>`;
+      }
+
+      // Dias do mês
+      for (let d = 1; d <= diasNoMes; d++) {
+         const dataAtualStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+         const qtdAgendados = todosAgendamentos.filter(ag => ag.data === dataAtualStr && ag.status !== 'Cancelado').length;
+         const livres = Math.max(0, VAGAS_POR_DIA - qtdAgendados);
+
+         // Lógica de cores baseada na ocupação
+         let bgCor = qtdAgendados === 0 ? '#f8fafc' : (livres === 0 ? '#fee2e2' : '#d1fae5');
+         let txtCor = qtdAgendados === 0 ? '#94a3b8' : (livres === 0 ? '#991b1b' : '#065f46');
+         let isHoje = (dataAtualStr === dataFiltroStr) ? 'border: 2px solid #667eea;' : '';
+
+         html += `
+           <div class="calendario-box" style="background: ${bgCor}; ${isHoje}" onclick="mudarParaDia('${dataAtualStr}')">
+             <div style="font-size: 22px; font-weight: 800; color: #1e293b; margin-bottom: 5px;">${d}</div>
+             <div style="font-size: 11px; color: ${txtCor}; font-weight: 700;">${qtdAgendados > 0 ? qtdAgendados + ' Agendados' : 'Sem agenda'}</div>
+             <div style="font-size: 11px; color: #64748b; font-weight: 500; margin-top: 3px;">${livres} Livres</div>
+           </div>
+         `;
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+  }
+
+
   function abrirModalAgendamento() { document.getElementById('formAgendamento').reset(); document.getElementById('agendaId').value=''; document.getElementById('agendaData').value=document.getElementById('filtroData').value; document.getElementById('modalAgendamento').style.display='flex'; }
   window.editarAgendamento = (ag) => { document.getElementById('agendaId').value=ag.id; document.getElementById('agendaData').value=ag.data; document.getElementById('agendaHora').value=ag.hora; document.getElementById('agendaCliente').value=ag.cliente; document.getElementById('agendaCelular').value=ag.celular; document.getElementById('agendaBarbeiro').value=ag.barbeiro; document.getElementById('agendaServico').value=ag.servico; document.getElementById('agendaStatus').value=ag.status; document.getElementById('agendaObs').value=ag.obs; document.getElementById('modalAgendamento').style.display='flex'; };
   window.deletarAgendamento = async (id) => { const { isConfirmed } = await Swal.fire({ title: 'Excluir?', icon: 'warning', showCancelButton: true }); if(isConfirmed) { google.script.run.withSuccessHandler(()=>{carregarDadosAgenda();}).excluirAgendamento(id, usuarioAtual.nome); } };
   window.abrirCheckout = async (ag) => { let opt = configData.formasPagamento.map(f=>`<option value="${f}">${f}</option>`).join(''); let pSug = configData.precos.find(p=>p.tipo===ag.servico); const { value } = await Swal.fire({ title: 'Finalizar', html: `<div style="text-align: left;"><label>Valor (R$)</label><input id="swal-val" type="number" step="0.01" value="${pSug?pSug.preco:''}" class="swal2-input"><label>Pagamento</label><select id="swal-pag" class="swal2-select">${opt}</select></div>`, showCancelButton: true, preConfirm: () => ({ val: document.getElementById('swal-val').value, pag: document.getElementById('swal-pag').value }) }); if (value && value.val) { ag.status = 'Concluído'; ag.valorLancamento = value.val; ag.formaPagamento = value.pag; Swal.fire({ title: 'Lançando...', didOpen:()=>Swal.showLoading() }); google.script.run.withSuccessHandler(()=>{ Swal.fire('Sucesso!', '', 'success'); carregarDadosAgenda(); }).salvarAgendamento(ag, usuarioAtual.nome); } };
   document.getElementById('formAgendamento').addEventListener('submit', e => { e.preventDefault(); const nome = document.getElementById('agendaCliente').value.trim(); if(!listaDeClientes.find(c=>String(c.Nome||c.Cliente||'').toLowerCase()===nome.toLowerCase())) return Swal.fire('Atenção', 'Selecione um cliente válido!', 'warning'); const ag = { id: document.getElementById('agendaId').value, data: document.getElementById('agendaData').value, hora: document.getElementById('agendaHora').value, cliente: nome, celular: document.getElementById('agendaCelular').value, barbeiro: document.getElementById('agendaBarbeiro').value, servico: document.getElementById('agendaServico').value, status: document.getElementById('agendaStatus').value, obs: document.getElementById('agendaObs').value }; if(ag.status==='Concluído') { fecharModal('modalAgendamento'); return abrirCheckout(ag); } Swal.fire({ title: 'Salvando...', didOpen:()=>Swal.showLoading() }); google.script.run.withSuccessHandler(()=>{ fecharModal('modalAgendamento'); Swal.fire('Salvo!', '', 'success'); carregarDadosAgenda(); }).salvarAgendamento(ag, usuarioAtual.nome); });
+
+// ==================== ATIVADOR DO MENU LATERAL ====================
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', function() {
+      // Pega o nome da página (agenda, financeiro, vendas) e troca a tela
+      mostrarPagina(this.dataset.page);
+    });
+  });
+
 </script>
 </body>
 </html>
