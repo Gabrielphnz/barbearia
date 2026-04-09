@@ -1,651 +1,959 @@
-// ==================== CONFIGURAÇÕES GLOBAIS ====================
-const SHEETS = {
-  USUARIOS: 'USUARIOS',
-  CLIENTES: 'CLIENTES',
-  AGENDA: 'AGENDA',
-  FINANCEIRO: 'Total', 
-  EVOLUCAO: 'EVOLUCAO',
-  ESTOQUE_PRODUTOS: 'ESTOQUE_PRODUTOS',
-  ESTOQUE_MOV: 'ESTOQUE_MOV',
-  LOG_EXCLUSOES: 'LOG_EXCLUSOES'
-};
-
-// ==================== AUTENTICAÇÃO ====================
-function autenticar(login, senha) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.USUARIOS);
-  if(!sheet) return { success: false };
-  const data = sheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (data[i][1] == login && data[i][2] == senha) {
-      return { success: true, nivel: data[i][3], nome: data[i][0] };
-    }
-  }
-  return { success: false };
-}
-
-// ==================== CONFIGURAÇÕES (NOVO MOTOR) ====================
-function getConfiguracoesCompletas() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName('config') || ss.getSheets().find(s => s.getName().toLowerCase().trim() === 'config');
-  let config = { tiposCorte: [], precos: [], barbeiros: [], formasPagamento: [] };
-  if (!sheet) return config;
-
-  const data = sheet.getDataRange().getValues();
-  let colEstilos = -1, rowEstilos = -1, colPrecos = -1, colBarbeiros = -1, rowBarbeiros = -1, colFormas = -1, rowFormas = -1;
-
-  for (let r = 0; r < data.length; r++) {
-    for (let c = 0; c < data[r].length; c++) {
-      let val = String(data[r][c]).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
-      if (val === 'ESTILOS' || val === 'TIPO DE CORTE' || val === 'SERVICOS') { colEstilos = c; rowEstilos = r; }
-      else if (val === 'PRECOS' || val === 'VALORES' || val === 'PRECO' || val === 'PREÇOS') { colPrecos = c; }
-      else if (val === 'BARBEIROS' || val === 'PROFISSIONAIS') { colBarbeiros = c; rowBarbeiros = r; }
-      else if (val.includes('FORMAS PAG') || val.includes('PAGAMENTO') || val === 'FORMAS DE PAGAMENTO') { colFormas = c; rowFormas = r; }
-    }
-  }
-
-  if (colEstilos !== -1) {
-    if (colPrecos === -1) colPrecos = colEstilos + 1;
-    for (let r = rowEstilos + 1; r < data.length; r++) {
-      let estilo = String(data[r][colEstilos]).trim();
-      if (!estilo) break; 
-      let preco = parseFloat(String(data[r][colPrecos]).replace(',', '.')) || 0;
-      config.tiposCorte.push(estilo);
-      config.precos.push({ tipo: estilo, preco: preco });
-    }
-  }
-
-  if (colBarbeiros !== -1) {
-    for (let r = rowBarbeiros + 1; r < data.length; r++) {
-      let b = String(data[r][colBarbeiros]).trim();
-      if (!b) break;
-      config.barbeiros.push(b);
-    }
-  }
-
-  if (colFormas !== -1) {
-    for (let r = rowFormas + 1; r < data.length; r++) {
-      let f = String(data[r][colFormas]).trim();
-      if (!f) break;
-      config.formasPagamento.push(f);
-    }
-  }
-  return config;
-}
-
-function salvarConfiguracoesAPI(config) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName('config') || ss.getSheets().find(s => s.getName().toLowerCase().trim() === 'config');
-  if (!sheet) sheet = ss.insertSheet('config'); 
-  sheet.clear(); 
-  
-  sheet.getRange(1, 1).setValue('ESTILOS').setFontWeight('bold');
-  sheet.getRange(1, 2).setValue('PREÇOS').setFontWeight('bold');
-  for (let i = 0; i < config.precos.length; i++) {
-    sheet.getRange(i + 2, 1).setValue(config.precos[i].tipo);
-    sheet.getRange(i + 2, 2).setValue(config.precos[i].preco);
-  }
-  
-  sheet.getRange(1, 4).setValue('BARBEIROS').setFontWeight('bold');
-  for (let i = 0; i < config.barbeiros.length; i++) {
-    sheet.getRange(i + 2, 4).setValue(config.barbeiros[i]);
-  }
-  
-  sheet.getRange(1, 6).setValue('FORMAS DE PAGAMENTO').setFontWeight('bold');
-  for (let i = 0; i < config.formasPagamento.length; i++) {
-    sheet.getRange(i + 2, 6).setValue(config.formasPagamento[i]);
-  }
-  return true;
-}
-
-// ==================== CLIENTES ====================
-function getClientes() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.CLIENTES);
-  if (!sheet || sheet.getLastRow() < 2) return []; 
-  
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0].map(h => String(h).trim());
-  const clientes = [];
-  
-  for (let i = 1; i < data.length; i++) {
-    if (!data[i].join('').trim()) continue; 
-    let cliente = {};
-    for (let j = 0; j < headers.length; j++) {
-      let val = data[i][j];
-      if (val instanceof Date) val = Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy-MM-dd");
-      cliente[headers[j]] = (val === null || val === undefined) ? '' : String(val).trim();
-    }
-    clientes.push(cliente);
-  }
-  return clientes.sort((a, b) => String(a.Nome || a.Cliente || '').localeCompare(String(b.Nome || b.Cliente || '')));
-}
-
-function salvarClienteCompleto(dados, usuario) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.CLIENTES);
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  let linhaExistente = -1;
-  
-  if (dados.ID && sheet.getLastRow() > 1) {
-    const colIndex = headers.findIndex(h => String(h).toUpperCase().trim() === 'ID');
-    const colId = colIndex !== -1 ? colIndex + 1 : 1;
-    const ids = sheet.getRange(2, colId, sheet.getLastRow()-1, 1).getValues().flat();
-    linhaExistente = ids.findIndex(id => String(id) === String(dados.ID)) + 2;
-  }
-  
-  const novaLinha = new Array(headers.length).fill('');
-  headers.forEach((h, i) => {
-    let hUpper = String(h).toUpperCase().trim();
-    if (hUpper === 'ID') novaLinha[i] = dados.ID || new Date().getTime();
-    else if (hUpper === 'NOME' || hUpper === 'CLIENTE') novaLinha[i] = dados.Nome;
-    else if (hUpper === 'APELIDO') novaLinha[i] = dados.Apelido || '';
-    else if (hUpper === 'CELULAR' || hUpper === 'TELEFONE') novaLinha[i] = dados.Celular;
-    else if (hUpper === 'CPF') novaLinha[i] = dados.CPF || '';
-    else if (hUpper === 'NASCIMENTO') novaLinha[i] = dados.Nascimento || '';
-    else if (hUpper === 'ENDERECO' || hUpper === 'ENDEREÇO') novaLinha[i] = dados.Endereco || '';
-    else if (hUpper === 'BAIRRO') novaLinha[i] = dados.Bairro || '';
-    else if (hUpper === 'CIDADE') novaLinha[i] = dados.Cidade || '';
-    else if (hUpper === 'EMAIL') novaLinha[i] = dados.Email || '';
-    else if (hUpper === 'OBS' || hUpper.includes('OBSERVA')) novaLinha[i] = dados.Obs || '';
-  });
-  
-  if (linhaExistente > 1) sheet.getRange(linhaExistente, 1, 1, novaLinha.length).setValues([novaLinha]);
-  else sheet.appendRow(novaLinha);
-  return { success: true, clienteNome: dados.Nome };
-}
-
-// ==================== AGENDA ====================
-function getAgendamentos() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  const eventos = [];
-  
-  for (let i = 1; i < data.length; i++) {
-    if (!data[i].join('').trim()) continue;
-    let ev = {};
-    for (let j = 0; j < headers.length; j++) ev[headers[j]] = data[i][j];
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barbearia Manager ERP</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; background: #f0f2f5; color: #1e293b; }
+    .app-container { display: flex; }
     
-    let dataStr = '';
-    if (ev.Data instanceof Date) dataStr = Utilities.formatDate(ev.Data, Session.getScriptTimeZone(), "yyyy-MM-dd");
-    else if (typeof ev.Data === 'string') {
-      if(ev.Data.includes('/')) { let p = ev.Data.split('/'); if(p.length === 3) dataStr = `${p[2]}-${p[1]}-${p[0]}`; }
-      else dataStr = ev.Data.split('T')[0];
+      .sidebar { width: 280px; background: white; border-radius: 24px; margin: 20px 0 20px 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding: 24px 16px; height: calc(100vh - 40px); position: fixed; top: 0; left: 0; z-index: 1000; overflow-y: auto; }
+    .logo-area { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
+    .logo-area i { font-size: 32px; color: #667eea; }
+    .logo-area h1 { font-size: 22px; font-weight: 700; }
+    .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; margin-bottom: 6px; cursor: pointer; transition: all 0.2s; color: #475569; font-weight: 500;}
+    .nav-item i { width: 24px; font-size: 18px; text-align: center;}
+    .nav-item.active { background: #667eea; color: white; }
+    .nav-item:hover:not(.active) { background: #f1f5f9; }
+    
+    .main-content { margin-left: 320px; padding: 20px 30px; flex: 1; }
+    .card { background: white; border-radius: 20px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 12px; flex-wrap: wrap; gap: 10px; }
+    
+    .btn { padding: 10px 16px; border-radius: 10px; border: none; font-weight: 500; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px;}
+    .btn-primary { background: #667eea; color: white; }
+    .btn-primary:hover { background: #5a67d8; }
+    .btn-success { background: #10b981; color: white; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-outline { background: transparent; border: 1px solid #cbd5e1; color: #475569;}
+    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px;}
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 14px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: 14px;}
+    th { background: #f8fafc; font-weight: 600; color: #475569; font-size: 13px; text-transform: uppercase;}
+    
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; z-index: 2000; padding: 20px; }
+    .modal-content { background: white; border-radius: 24px; padding: 32px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-field { margin-bottom: 16px; }
+    .form-field label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; color: #475569;}
+    .form-field input, .form-field select, .form-field textarea { width: 100%; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 10px; font-family: inherit; font-size: 14px; outline: none;}
+    .full-width { grid-column: 1 / -1; }
+
+    .ficha-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 2px solid #f1f5f9; padding-bottom: 16px;}
+    .ficha-nome { font-size: 24px; font-weight: 700; color: #1e293b; margin-bottom: 4px;}
+    .ficha-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;}
+    .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; text-align: center;}
+    .stat-box .valor { font-size: 20px; font-weight: 700; color: #10b981; margin-top: 8px;}
+    .stat-box .titulo { font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 600;}
+    
+    .agenda-toolbar { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; background: white; padding: 16px; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); flex-wrap: wrap; }
+    .agenda-card { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px; }
+    .agenda-hora { font-size: 20px; font-weight: 700; color: #667eea; min-width: 70px;}
+    .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; background: #dbeafe; color: #1e40af;}
+    
+    /* Layout Lateralizado do Financeiro */
+    .layout-lateral { display: flex; gap: 24px; align-items: flex-start; }
+    .sidebar-filtros { width: 260px; background: #f8fafc; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; flex-shrink: 0; }
+    .conteudo-tabela { flex: 1; min-width: 0; }
+    
+    /* Dashboard e Gráficos */
+    .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 24px; }
+    .dashboard-card { background: white; border-radius: 20px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); text-align: center; border: 1px solid #f1f5f9;}
+    .dashboard-card h3 { font-size: 13px; color: #64748b; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;}
+    .dashboard-card .value { font-size: 28px; font-weight: 700; color: #1e293b; }
+    .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 24px; }
+    .chart-container { background: white; padding: 20px; border-radius: 20px; border: 1px solid #f1f5f9; box-shadow: 0 2px 5px rgba(0,0,0,0.05);}
+    
+    #loginScreen { display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; }
+    .login-card { background: white; border-radius: 24px; padding: 40px; width: 350px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+    .login-card input { width: 100%; margin-bottom: 15px; padding: 12px; border-radius: 10px; border: 1px solid #cbd5e1; }
+    
+    #mainApp { display: none; }
+    .search-bar { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #cbd5e1; font-size: 14px; margin-bottom: 20px; background: #f8fafc;}
+    .client-input-wrapper { display: flex; gap: 8px; align-items: stretch; height: 42px; }
+    .client-input-wrapper input { flex: 1; margin: 0; height: 100%; border-radius: 10px; border: 1px solid #cbd5e1; padding: 10px 14px;}
+    .client-input-wrapper button { margin: 0; height: 100%; white-space: nowrap; display: flex; align-items: center; justify-content: center; border-radius: 10px; padding: 0 16px; }
+    .config-list { list-style: none; padding: 0; margin-top: 10px; }
+    .config-list li { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; }
+    .dados-pessoais-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* ================= NOVO DESIGN DA AGENDA ================= */
+    .agenda-semana-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 16px;
+      overflow-x: auto;
+      padding-bottom: 10px;
     }
-    
-    let horaStr = '00:00';
-    if (ev.Hora instanceof Date) horaStr = Utilities.formatDate(ev.Hora, Session.getScriptTimeZone(), "HH:mm");
-    else if (typeof ev.Hora === 'string' && ev.Hora.trim() !== '') horaStr = ev.Hora.substring(0, 5);
-    
-    if (dataStr && dataStr.length >= 8) {
-      eventos.push({
-        id: ev.ID || new Date().getTime() + i,
-        data: dataStr, hora: horaStr,
-        cliente: ev.Cliente || '', barbeiro: ev.Barbeiro || '',
-        servico: ev['Tipo de corte'] || ev['Servico'] || 'Corte',
-        celular: ev.Celular || '', status: ev.Status || 'Agendado',
-        obs: ev.Obs || ev['Observações'] || ''
-      });
+    .agenda-dia-coluna {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 12px;
+      min-width: 250px; /* Garante que as colunas não se esmaguem */
     }
-  }
-  return eventos.sort((a, b) => a.hora.localeCompare(b.hora));
-}
+    .mini-card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border-left: 4px solid #667eea;
+    }
+    .agenda-mes-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 12px;
+    }
+    .calendario-box {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      height: 110px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .calendario-box:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+      border-color: #667eea;
+    }
+    .calendario-vazio { background: transparent; border: none; }
+  </style>
+</head>
+<body>
 
-function salvarAgendamento(agendamento, usuario) {
-  const sheetAgenda = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
-  const headers = sheetAgenda.getRange(1, 1, 1, sheetAgenda.getLastColumn()).getValues()[0];
-  let linhaExistente = -1;
-  
-  if (agendamento.id && sheetAgenda.getLastRow() > 1) {
-    const ids = sheetAgenda.getRange(2, 1, sheetAgenda.getLastRow()-1, 1).getValues().flat();
-    linhaExistente = ids.findIndex(id => String(id) === String(agendamento.id)) + 2;
-  }
-  
-  const novaLinha = [];
-  for (let i = 0; i < headers.length; i++) {
-    let h = String(headers[i]).toUpperCase().trim();
-    let valor = '';
-    if (h === 'ID') valor = agendamento.id || new Date().getTime();
-    else if (h === 'DATA') valor = agendamento.data;
-    else if (h === 'HORA') valor = agendamento.hora;
-    else if (h === 'CLIENTE') valor = agendamento.cliente;
-    else if (h === 'BARBEIRO') valor = agendamento.barbeiro;
-    else if (h === 'TIPO DE CORTE' || h === 'SERVICO' || h === 'SERVIÇO') valor = agendamento.servico;
-    else if (h === 'STATUS') valor = agendamento.status;
-    else if (h === 'CELULAR') valor = agendamento.celular;
-    else if (h === 'OBS' || h.includes('OBSERVA')) valor = agendamento.obs;
-    novaLinha.push(valor);
-  }
-  
-  if (linhaExistente > 1) sheetAgenda.getRange(linhaExistente, 1, 1, novaLinha.length).setValues([novaLinha]);
-  else sheetAgenda.appendRow(novaLinha);
+<div id="loginScreen">
+  <div class="login-card">
+    <i class="fas fa-cut" style="font-size: 48px; color: #667eea; margin-bottom: 20px;"></i>
+    <h2 style="margin-bottom: 20px;">Barbearia Manager</h2>
+    <input type="text" id="loginUser" placeholder="Usuário">
+    <input type="password" id="loginPass" placeholder="Senha">
+    <button class="btn btn-primary" style="width:100%" onclick="fazerLogin()">Entrar no Sistema</button>
+  </div>
+</div>
 
-  if (agendamento.status === 'Concluído' && agendamento.valorLancamento !== undefined && agendamento.valorLancamento !== '') {
-    lancarNoFinanceiro(agendamento, usuario);
-    registrarEvolucao(agendamento.cliente, agendamento.barbeiro, agendamento.servico, agendamento.obs);
-  }
-  return { success: true };
-}
-
-function excluirAgendamento(id, usuario) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
-  if(sheet.getLastRow() <= 1) return { success: false };
-  const ids = sheet.getRange(2, 1, sheet.getLastRow()-1, 1).getValues().flat();
-  const index = ids.findIndex(v => String(v) === String(id));
-  if (index !== -1) {
-    sheet.deleteRow(index+2);
-    return { success: true };
-  }
-  return { success: false };
-}
-
-// ==================== FINANCEIRO (SIMPLES E DIRETO) ====================
-function getSheetFinanceiro() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEETS.FINANCEIRO);
-  if (sheet) return sheet;
-  return ss.getSheets().find(s => ['total', 'atendimentos', 'financeiro', 'caixa'].includes(s.getName().toLowerCase().trim()));
-}
-
-function getHeaderRowIndex(dataFin) {
-  for (let r = 0; r < Math.min(5, dataFin.length); r++) {
-    if (String(dataFin[r][0]).toUpperCase().trim() === 'DATA') return r;
-  }
-  return 0;
-}
-
-// Lança o valor na coluna VALOR e o texto na coluna FORMA DE PAGAMENTO
-function lancarNoFinanceiro(agendamento, usuario) {
-  const sheet = getSheetFinanceiro();
-  if (!sheet || sheet.getLastColumn() < 1) return; 
-
-  const dataFin = sheet.getDataRange().getValues();
-  if (dataFin.length === 0) return;
-
-  const headerRowIdx = getHeaderRowIndex(dataFin);
-  const headers = dataFin[headerRowIdx] || sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  
-  let novaLinha = new Array(headers.length).fill('');
-  let dataBR = agendamento.data;
-  if(dataBR && dataBR.includes('-')) dataBR = dataBR.split('-').reverse().join('/');
-  
-  const valorNum = parseFloat(agendamento.valorLancamento.toString().replace(',', '.'));
-  const formaPag = agendamento.formaPagamento; // Pega exatamente o texto que veio do select (ex: "PIX EMANUEL")
-
-  headers.forEach((h, i) => {
-    let hUpper = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
+<div id="mainApp">
+  <div class="app-container">
+    <div class="sidebar" id="sidebar">
+      <div class="logo-area">
+        <i class="fas fa-cut"></i>
+        <span><h1>Barbearia</h1></span>
+      </div>
+      <div class="nav-item active" data-page="dashboard"><i class="fas fa-chart-line"></i> <span>Dashboard</span></div>
+      <div class="nav-item" data-page="agenda"><i class="fas fa-calendar-alt"></i> <span>Agenda</span></div>
+      <div class="nav-item" data-page="vendas"><i class="fas fa-shopping-cart"></i> <span>PDV / Vendas</span></div>
+      <div class="nav-item" data-page="clientes"><i class="fas fa-users"></i> <span>Clientes</span></div>
+      <div class="nav-item" data-page="financeiro"><i class="fas fa-wallet"></i> <span>Financeiro</span></div>
+      <div id="estoqueNav" class="nav-item" data-page="estoque" style="display: none;"><i class="fas fa-boxes"></i> <span>Estoque</span></div>
+      <div id="configNav" class="nav-item" data-page="config" style="display: none;"><i class="fas fa-cog"></i> <span>Configurações</span></div>
+    </div>
     
-    if (hUpper === 'DATA') novaLinha[i] = dataBR;
-    else if (hUpper === 'BARBEIRO') novaLinha[i] = agendamento.barbeiro;
-    else if (hUpper === 'CLIENTES' || hUpper === 'CLIENTE' || hUpper === 'NOME') novaLinha[i] = agendamento.cliente;
-    else if (hUpper === 'TIPO DE CORTE' || hUpper === 'SERVICO') novaLinha[i] = agendamento.servico;
-    else if (hUpper.includes('OBSERVA')) novaLinha[i] = agendamento.obs;
-    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) novaLinha[i] = formaPag; // Coloca a string da forma de pagamento
-    else if (hUpper === 'ID CONTROLE') novaLinha[i] = agendamento.id || new Date().getTime(); 
-  });
-
-  // Acha a coluna de Valor (a primeira que tiver a palavra VALOR no cabeçalho)
-  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
-  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
-  
-  if (idxValor !== -1) {
-    novaLinha[idxValor] = valorNum; // Coloca o dinheiro aqui
-  }
-  
-  sheet.appendRow(novaLinha);
-}
-
-function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
-  const sheet = getSheetFinanceiro();
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  const data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-  
-  const headerRowIdx = getHeaderRowIndex(data);
-  const headers = data[headerRowIdx];
-  const transacoes = [];
-  
-  const inicio = filtroDataInicio ? new Date(filtroDataInicio) : null;
-  const fim = filtroDataFim ? new Date(filtroDataFim) : null;
-  
-  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
-  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
-
-  for (let i = data.length - 1; i > headerRowIdx; i--) {
-    if (!data[i].join('').trim()) continue;
-    let t = { linha: i + 1, id: '', valor: 0 }; 
-    let dataTransacao = null;
-    
-    for (let j = 0; j < headers.length; j++) {
-      let h = String(headers[j]).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
-      let val = data[i][j];
+    <div class="main-content">
       
-      // BLINDAGEM: Converte TUDO para texto (String) antes de enviar para a tela
-      if (h === 'DATA') {
-        if (val instanceof Date) { dataTransacao = val; t.data = Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy"); } 
-        else if (typeof val === 'string') { let p = val.split('/'); if (p.length === 3) dataTransacao = new Date(`${p[2]}-${p[1]}-${p[0]}`); t.data = val; }
-        else { t.data = String(val); }
-      }
-      else if (h === 'CLIENTES' || h === 'CLIENTE') t.cliente = String(val);
-      else if (h === 'BARBEIRO') t.barbeiro = String(val);
-      else if (h === 'TIPO DE CORTE' || h === 'SERVICO') t.servico = String(val);
-      else if (h.includes('FORMA DE PAG')) t.forma = String(val);
-      else if (h === 'ID CONTROLE') t.id = String(val);
-    }
-    
-    if (idxValor !== -1) {
-      let v = data[i][idxValor];
-      if (v && !isNaN(parseFloat(v))) t.valor = parseFloat(v);
-    }
-    
-    if (t.valor || t.forma) { 
-      if (inicio && dataTransacao < inicio) continue;
-      if (fim && dataTransacao > fim) continue;
-      if (barbeiro && t.barbeiro !== barbeiro) continue;
-      transacoes.push(t);
-    }
-  }
-  return transacoes;
-}
-
-
-function atualizarEdicaoFinanceiro(dadosLancamento) {
-  const sheet = getSheetFinanceiro();
-  if (!sheet) return { success: false };
-  const linha = dadosLancamento.linha;
-  const dataFin = sheet.getDataRange().getValues();
-  const headerRowIdx = getHeaderRowIndex(dataFin);
-  const headers = dataFin[headerRowIdx];
-  
-  const valorNum = parseFloat(dadosLancamento.valor);
-  const formaPag = dadosLancamento.forma; // Mantém a string exata
-
-  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
-  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
-
-  headers.forEach((h, j) => {
-    let hUpper = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
-    let celula = sheet.getRange(linha, j + 1);
-    
-    if (hUpper === 'DATA') celula.setValue(dadosLancamento.data);
-    else if (hUpper === 'BARBEIRO') celula.setValue(dadosLancamento.barbeiro);
-    else if (hUpper === 'CLIENTES' || hUpper === 'CLIENTE') celula.setValue(dadosLancamento.cliente);
-    else if (hUpper === 'TIPO DE CORTE' || hUpper === 'SERVICO') celula.setValue(dadosLancamento.servico);
-    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) celula.setValue(formaPag);
-    
-    // Limpa colunas de valor que não são a principal (caso tenha sobrado lixo antigo)
-    else if (hUpper.includes('VALOR') && j !== idxValor) celula.setValue('');
-  });
-  
-  if (idxValor !== -1) {
-    sheet.getRange(linha, idxValor + 1).setValue(valorNum);
-  }
-  
-  return { success: true };
-}
-
-function obterFichaCompleta(nomeCliente) {
-  const clientes = getClientes();
-  const dadosPessoais = clientes.find(c => String(c.Nome || c.Cliente).toLowerCase() === String(nomeCliente).toLowerCase()) || {};
-  const historico = []; let totalGasto = 0;
-  const sheetFinanceiro = getSheetFinanceiro();
-  
-  if (sheetFinanceiro && sheetFinanceiro.getLastRow() > 1) {
-    const dataFin = sheetFinanceiro.getDataRange().getValues();
-    const headerRowIdx = getHeaderRowIndex(dataFin);
-    const headFin = dataFin[headerRowIdx];
-    
-    let idxValor = headFin.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
-    if (idxValor === -1) idxValor = headFin.findIndex(h => String(h).toUpperCase().includes('VALOR'));
-
-    for (let i = dataFin.length - 1; i > headerRowIdx; i--) {
-      if (!dataFin[i].join('').trim()) continue;
-      let isMatch = false; let t = { valor: 0 };
-      
-      headFin.forEach((h, j) => {
-        let hUp = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim(); 
-        let val = dataFin[i][j];
-        if ((hUp === 'CLIENTES' || hUp === 'CLIENTE' || hUp === 'NOME') && String(val).toLowerCase() === String(nomeCliente).toLowerCase()) isMatch = true;
+      <div id="pageDashboard" class="page-content">
+        <div class="card-header"><h2><i class="fas fa-chart-pie"></i> Visão Geral do Negócio</h2><button class="btn btn-outline" onclick="carregarDashboard()"><i class="fas fa-sync-alt"></i> Atualizar</button></div>
+        <div class="dashboard-grid">
+          <div class="dashboard-card"><h3>Faturamento Hoje</h3><div class="value" style="color: #10b981;" id="dashFatHoje">R$ 0,00</div></div>
+          <div class="dashboard-card"><h3>Faturamento Mês</h3><div class="value" id="dashFatMes">R$ 0,00</div></div>
+          <div class="dashboard-card"><h3>Clientes Únicos (Mês)</h3><div class="value" style="color: #3b82f6;" id="dashCliMes">0</div></div>
+          <div class="dashboard-card"><h3>Ticket Médio</h3><div class="value" id="dashTicket">R$ 0,00</div></div>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-container">
+            <h4 style="margin-bottom: 15px; color: #475569;">Faturamento Mensal (Últimos 6 meses)</h4>
+            <div style="position: relative; height: 250px; width: 100%;">
+              <canvas id="chartFaturamento"></canvas>
+            </div>
+          </div>
+          <div class="chart-container">
+            <h4 style="margin-bottom: 15px; color: #475569;">Serviços Mais Vendidos</h4>
+            <div style="position: relative; height: 250px; width: 100%;">
+              <canvas id="chartServicos"></canvas>
+            </div>
+          </div>
+        </div>
         
-        if (hUp === 'DATA') t.data = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy") : val;
-        if (hUp === 'BARBEIRO') t.barbeiro = val;
-        if (hUp === 'TIPO DE CORTE' || hUp === 'SERVICO') t.servico = val;
-        if (hUp.includes('FORMA DE PAG')) t.forma = val;
-      });
-      
-      if (idxValor !== -1) {
-        let v = dataFin[i][idxValor];
-        if (v && !isNaN(parseFloat(v))) t.valor = parseFloat(v);
-      }
-      
-      if (isMatch && t.valor > 0) { historico.push(t); totalGasto += t.valor; }
-    }
-  }
-  return { dados: dadosPessoais, historico: historico, resumo: { totalGasto: totalGasto, ultimaVisita: historico.length > 0 ? historico[0].data : 'Nunca', qtdVisitas: historico.length } };
-}
-
-// ==================== ESTOQUE E VENDAS (NOVO MOTOR) ====================
-function getProdutos() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  const produtos = [];
-  for (let i = 1; i < data.length; i++) {
-    if (!String(data[i][1]).trim()) continue;
-    let p = {};
-    for (let j = 0; j < headers.length; j++) {
-      p[String(headers[j]).toUpperCase().trim()] = data[i][j];
-    }
-    produtos.push(p);
-  }
-  return produtos;
-}
-
-// NOVA FUNÇÃO: Realiza a Venda do Produto
-function realizarVendaProduto(venda, usuario) {
-  const sheetProd = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
-  const produtos = getProdutos();
-  const idxProd = produtos.findIndex(p => p.PRODUTO === venda.produto);
-  
-  if (idxProd !== -1) {
-    const linha = idxProd + 2;
-    // Localiza as colunas cruciais
-    const headers = sheetProd.getRange(1, 1, 1, sheetProd.getLastColumn()).getValues()[0].map(h => String(h).toUpperCase().trim());
-    const colAtual = headers.indexOf('ESTOQUE ATUAL') + 1;
-    
-    if (colAtual > 0) {
-      const qtdAtual = parseFloat(sheetProd.getRange(linha, colAtual).getValue()) || 0;
-      sheetProd.getRange(linha, colAtual).setValue(qtdAtual - venda.quantidade);
-    }
-    
-    // Registra Movimento
-    const sheetMov = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_MOV);
-    if (sheetMov) {
-      sheetMov.appendRow([
-        venda.data, usuario, venda.produto, 'Venda', venda.quantidade, venda.precoUnitario, venda.total, venda.barbeiro, 'Venda Balcão'
-      ]);
-    }
-    
-    // Lança no Financeiro
-    lancarNoFinanceiro({
-      data: venda.data,
-      cliente: 'Venda Avulsa',
-      barbeiro: venda.barbeiro,
-      servico: 'Produto: ' + venda.produto,
-      formaPagamento: venda.formaPagamento,
-      valorLancamento: venda.total,
-      obs: `${venda.quantidade}x ${venda.produto}`
-    }, usuario);
-    
-    return { success: true };
-  }
-  return { success: false, msg: 'Produto não encontrado' };
-}
-
-function salvarProduto(produto, usuario) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  let linhaExistente = -1;
-  
-  if (produto.ID && sheet.getLastRow() > 1) {
-    const colId = headers.findIndex(h => String(h).toUpperCase().trim() === 'ID') + 1;
-    if(colId > 0) {
-      const ids = sheet.getRange(2, colId, sheet.getLastRow()-1, 1).getValues().flat();
-      linhaExistente = ids.findIndex(id => String(id) === String(produto.ID)) + 2;
-    }
-  }
-  
-  const novaLinha = new Array(headers.length).fill('');
-  headers.forEach((h, i) => {
-    let hUpper = h.toString().toUpperCase().trim();
-    if (hUpper === 'ID') novaLinha[i] = produto.ID || new Date().getTime();
-    else if (hUpper === 'PRODUTO') novaLinha[i] = produto.nome;
-    else if (hUpper === 'CATEGORIA') novaLinha[i] = produto.categoria;
-    else if (hUpper === 'UNIDADE') novaLinha[i] = produto.unidade;
-    else if (hUpper === 'ESTOQUE MINIMO') novaLinha[i] = produto.estoqueMinimo;
-    
-    // CORREÇÃO: Agora ele lê a variável "estoqueAtual" enviada pela tela
-    else if (hUpper === 'ESTOQUE ATUAL') novaLinha[i] = produto.estoqueAtual || 0; 
-    
-    else if (hUpper === 'CUSTO') novaLinha[i] = produto.custo || 0;
-    else if (hUpper === 'PRECO' || hUpper === 'PREÇO') novaLinha[i] = produto.preco || 0;
-  });
-  
-  if (linhaExistente > 1) sheet.getRange(linhaExistente, 1, 1, novaLinha.length).setValues([novaLinha]);
-  else sheet.appendRow(novaLinha);
-}
-
-// ==================== DASHBOARD & GRÁFICOS ====================
-function getMetricasDashboard() {
-  const financeiro = getDadosFinanceiros(null, null, null);
-  const hojeDate = new Date();
-  const hojeStr = Utilities.formatDate(hojeDate, Session.getScriptTimeZone(), "dd/MM/yyyy");
-  
-  let faturamentoHoje = 0, faturamentoMes = 0;
-  let cortesMaisVendidos = {}, rankingBarbeiros = {};
-  let clientesAtendidos = new Set();
-  let faturamentoMensalChart = { labels: [], dados: [] };
-  let mesesMap = {};
-
-  financeiro.forEach(t => {
-    if (t.data === hojeStr) faturamentoHoje += t.valor || 0;
-    
-    if(t.data) {
-      const dataTrans = t.data.split('/');
-      if (dataTrans.length === 3) {
-        const mesTrans = dataTrans[1], anoTrans = dataTrans[2], mesAno = `${mesTrans}/${anoTrans}`;
+        <div class="charts-grid" style="grid-template-columns: 1fr;">
+          <div class="chart-container">
+             <h4 style="margin-bottom: 15px; color: #475569;">Ranking por Barbeiro</h4>
+             <div style="position: relative; height: 250px; width: 100%;">
+               <canvas id="chartBarbeiros"></canvas>
+             </div>
+          </div>
+        </div>
         
-        if (parseInt(mesTrans) === (hojeDate.getMonth() + 1) && parseInt(anoTrans) === hojeDate.getFullYear()) {
-          faturamentoMes += t.valor || 0;
-          if (t.cliente && t.cliente !== 'Venda Avulsa') clientesAtendidos.add(t.cliente);
+      </div> <div id="pageAgenda" class="page-content" style="display:none;">
+        <div class="agenda-toolbar">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="font-size:12px; font-weight:bold; color:#64748b;">VAGAS / DIA:</label>
+            <input type="number" id="configVagasDia" value="10" min="1" onchange="renderizarAgenda()" style="width: 60px; padding: 8px; border-radius: 10px; border: 1px solid #cbd5e1; text-align:center;">
+          </div>
+          <input type="date" id="filtroData" onchange="renderizarAgenda()" style="padding: 8px; border-radius: 10px; border: 1px solid #cbd5e1;">
+          <select id="filtroVisao" onchange="renderizarAgenda()" style="padding: 8px; border-radius: 10px; border: 1px solid #cbd5e1;">
+            <option value="diario">Visão Diária</option>
+            <option value="semanal">Visão Semanal</option>
+            <option value="mensal">Visão Mensal</option>
+          </select>
+          <button class="btn btn-primary" onclick="abrirModalAgendamento()" style="margin-left: auto;"><i class="fas fa-plus"></i> Novo Horário</button>
+        </div>
+        <div id="listaAgendamentos"></div>
+      </div>
+
+      <div id="pageVendas" class="page-content" style="display:none;">
+        <div class="card">
+          <div class="card-header"><h2><i class="fas fa-shopping-cart"></i> Ponto de Venda (Produtos)</h2></div>
+          <div class="form-grid">
+            <div class="form-field full-width">
+              <label>Selecione o Produto</label>
+              <select id="vendaProduto" onchange="atualizarPrecoVenda()" style="height: 50px; font-size: 16px;"><option value="">-- Escolha --</option></select>
+            </div>
+            <div class="form-field"><label>Quantidade</label><input type="number" id="vendaQtd" value="1" min="1" onchange="atualizarTotalVenda()" style="height: 50px; font-size: 16px; text-align: center;"></div>
+            <div class="form-field"><label>Preço Unit. (R$)</label><input type="number" id="vendaPreco" step="0.01" onchange="atualizarTotalVenda()" style="height: 50px; font-size: 16px;"></div>
+            <div class="form-field full-width">
+              <label>Cliente (Opcional)</label>
+              <input id="vendaCliente" list="listaClientesData" style="height: 50px; font-size: 16px; border-radius: 10px; border: 1px solid #cbd5e1; padding: 10px 14px;" placeholder="Nome do cliente na venda">
+            </div>
+            <div class="form-field"><label>Vendedor / Barbeiro</label><select id="vendaBarbeiro" style="height: 50px; font-size: 16px;"></select></div>
+            <div class="form-field"><label>Forma de Pagamento</label><select id="vendaPagamento" style="height: 50px; font-size: 16px;"></select></div>
+          </div>
+          <div style="background: #f8fafc; padding: 24px; border-radius: 16px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center; border: 1px dashed #cbd5e1;">
+            <div>
+              <span style="color: #64748b; font-weight: 600; text-transform: uppercase;">Total a Pagar</span>
+              <div id="vendaTotalDisplay" style="font-size: 36px; font-weight: 800; color: #10b981;">R$ 0,00</div>
+            </div>
+            <button class="btn btn-success" style="height: 60px; padding: 0 40px; font-size: 18px; border-radius: 16px;" onclick="finalizarVenda()"><i class="fas fa-check-circle"></i> Confirmar Venda</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="pageClientes" class="page-content" style="display:none;">
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fas fa-users"></i> Banco de Clientes</h2>
+            <button class="btn btn-primary" onclick="abrirModalClienteForm()"><i class="fas fa-user-plus"></i> Cadastrar Cliente</button>
+          </div>
+          <input type="text" id="buscaClienteTb" class="search-bar" placeholder="🔍 Pesquisar cliente por nome, celular ou CPF..." onkeyup="filtrarTabelaClientes()">
+          <table id="tabelaClientes">
+            <thead><tr><th>Nome</th><th>Celular</th><th>Ações</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="pageFinanceiro" class="page-content" style="display:none;">
+        <div class="card">
+          <div class="card-header">
+            <h2><i class="fas fa-wallet"></i> Gestão Financeira</h2>
+            <button class="btn btn-outline btn-sm" onclick="carregarFinanceiro()"><i class="fas fa-sync-alt"></i> Recarregar Dados</button>
+          </div>
+          
+          <input type="text" id="buscaFinanceiroGlob" class="search-bar" placeholder="🔍 Pesquise dinamicamente por Cliente, Serviço, Barbeiro, Data ou Pagamento..." onkeyup="filtrarTabelaFinanceiroLocal()">
+          
+          <div style="overflow-x: auto;">
+            <table id="tabelaFinanceiro">
+              <thead><tr><th>Data</th><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Pagamento</th><th>Valor</th><th>Ação</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="pageEstoque" class="page-content" style="display:none;">
+        <div class="card">
+          <div class="card-header"><h2><i class="fas fa-boxes"></i> Controle de Estoque</h2><button class="btn btn-primary" onclick="abrirModalProduto()"><i class="fas fa-plus"></i> Novo Produto</button></div>
+          <table id="tabelaEstoque"><thead><tr><th>Produto</th><th>Categoria</th><th>Estoque Atual</th><th>Custo</th><th>Preço</th><th>Ações</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div id="pageConfig" class="page-content" style="display:none;">
+        <div class="card">
+          <div class="card-header"><h2><i class="fas fa-cog"></i> Configurações do Sistema</h2><button class="btn btn-success" onclick="salvarTodasConfiguracoes()"><i class="fas fa-save"></i> Salvar Alterações</button></div>
+          <div style="margin-bottom: 30px;">
+            <h3><i class="fas fa-cut"></i> Serviços e Tabela de Preços</h3>
+            <div style="display: flex; gap: 10px; margin-top: 10px; margin-bottom: 10px;">
+              <input type="text" id="novoServicoTipo" placeholder="Nome do Serviço" style="padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; flex: 1;">
+              <input type="number" id="novoServicoPreco" placeholder="Preço (R$)" step="0.01" style="padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; width: 120px;">
+              <button class="btn btn-primary btn-sm" onclick="adicionarTabelaPreco()"><i class="fas fa-plus"></i> Adicionar</button>
+            </div>
+            <table id="tabelaPrecos" style="margin-top: 10px;"><thead><tr><th>Serviço</th><th>Preço (R$)</th><th style="width: 80px;">Ação</th></tr></thead><tbody></tbody></table>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+              <h3><i class="fas fa-users"></i> Barbeiros</h3>
+              <div style="display: flex; gap: 10px; margin-top: 10px;"><input type="text" id="novoBarbeiro" placeholder="Nome do Barbeiro" style="padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; flex: 1;"><button class="btn btn-primary btn-sm" onclick="adicionarConfigItem('barbeiros', 'novoBarbeiro')"><i class="fas fa-plus"></i></button></div>
+              <ul id="listaBarbeirosUI" class="config-list"></ul>
+            </div>
+            <div>
+              <h3><i class="fas fa-credit-card"></i> Formas de Pagamento</h3>
+              <div style="display: flex; gap: 10px; margin-top: 10px;"><input type="text" id="novaFormaPag" placeholder="Dinheiro, Pix..." style="padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; flex: 1;"><button class="btn btn-primary btn-sm" onclick="adicionarConfigItem('formasPagamento', 'novaFormaPag')"><i class="fas fa-plus"></i></button></div>
+              <ul id="listaFormasPagUI" class="config-list"></ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modalFichaCliente" class="modal" style="z-index: 1040;">
+  <div class="modal-content" style="max-width: 800px;">
+    <div class="ficha-header">
+      <div><div class="ficha-nome" id="fichaNome">Nome</div><div style="color: #64748b;" id="fichaCelular"></div></div>
+      <button class="btn btn-outline" onclick="fecharModal('modalFichaCliente')"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="ficha-secao"><div class="ficha-stats-grid"><div class="stat-box"><div class="titulo">Total Gasto</div><div class="valor" id="fichaTotalGasto">R$ 0,00</div></div><div class="stat-box"><div class="titulo">Total Visitas</div><div class="valor" id="fichaQtdVisitas">0</div></div><div class="stat-box"><div class="titulo">Última Visita</div><div class="valor" id="fichaUltimaVisita">Nunca</div></div></div></div>
+    <div class="ficha-secao" style="background: #f8fafc; padding: 16px; border-radius: 12px;">
+      <div style="display: flex; justify-content: space-between;"><h4><i class="fas fa-id-card"></i> Dados Pessoais</h4><button class="btn btn-sm btn-outline" onclick="editarClienteAtual()"><i class="fas fa-edit"></i> Editar</button></div>
+      <div class="dados-pessoais-grid" id="fichaDadosPessoais"></div>
+    </div>
+    <div class="ficha-secao"><h4><i class="fas fa-history"></i> Histórico de Atendimentos</h4><div style="max-height: 250px; overflow-y: auto;"><table style="margin: 0; font-size: 13px;"><thead style="position: sticky; top: 0; background: #f8fafc;"><tr><th>Data</th><th>Serviço</th><th>Barbeiro</th><th>Valor</th></tr></thead><tbody id="fichaHistoricoTb"></tbody></table></div></div>
+  </div>
+</div>
+
+<div id="modalClienteForm" class="modal" style="z-index: 1050;">
+  <div class="modal-content"><h3 style="margin-bottom: 20px;"><i class="fas fa-user-edit"></i> Dados do Cliente</h3>
+    <form id="formClienteCompleto"><input type="hidden" id="formCliId"><div class="form-grid"><div class="form-field full-width"><label>Nome Completo*</label><input id="formCliNome" required></div><div class="form-field"><label>Apelido</label><input id="formCliApelido"></div><div class="form-field"><label>Celular/WhatsApp*</label><input id="formCliCelular" required></div><div class="form-field"><label>CPF</label><input id="formCliCpf"></div><div class="form-field"><label>Nascimento</label><input type="date" id="formCliNasc"></div><div class="form-field"><label>Email</label><input type="email" id="formCliEmail"></div><div class="form-field full-width"><label>Endereço</label><input id="formCliEnd"></div><div class="form-field"><label>Bairro</label><input id="formCliBairro"></div><div class="form-field"><label>Cidade</label><input id="formCliCidade"></div><div class="form-field full-width"><label>Observações</label><textarea id="formCliObs" rows="2"></textarea></div></div><div style="display:flex; justify-content:flex-end; gap: 10px;"><button type="button" class="btn btn-outline" onclick="fecharModal('modalClienteForm')">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>
+  </div>
+</div>
+
+<div id="modalEditarFinanceiro" class="modal" style="z-index: 1050;">
+  <div class="modal-content"><h3 style="margin-bottom: 20px;"><i class="fas fa-edit"></i> Editar Lançamento</h3>
+    <form id="formEdicaoFinanceiro"><input type="hidden" id="editFinLinha"><div class="form-grid"><div class="form-field"><label>Data</label><input type="text" id="editFinData" required></div><div class="form-field"><label>Barbeiro</label><select id="editFinBarbeiro"></select></div><div class="form-field full-width"><label>Cliente</label><input type="text" id="editFinCliente"></div><div class="form-field full-width"><label>Serviço / Produto</label><input type="text" id="editFinServico"></div><div class="form-field"><label>Forma de Pagamento</label><select id="editFinForma" required></select></div><div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" id="editFinValor" required></div></div><div style="display:flex; justify-content:flex-end; gap: 10px; margin-top:10px;"><button type="button" class="btn btn-outline" onclick="fecharModal('modalEditarFinanceiro')">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div></form>
+  </div>
+</div>
+
+<div id="modalAgendamento" class="modal" style="z-index: 1000;">
+  <div class="modal-content"><h3><i class="fas fa-calendar-plus"></i> Agendamento</h3>
+    <form id="formAgendamento"><input type="hidden" id="agendaId"><div class="form-grid"><div class="form-field"><label>Data*</label><input type="date" id="agendaData" required></div>
+    <div class="form-field"><label>Hora*</label><input type="time" id="agendaHora" required></div>
+    <div class="form-field full-width"><label>Cliente*</label>
+    <div class="client-input-wrapper"><input list="listaClientesData" id="agendaCliente" required autocomplete="off"><datalist id="listaClientesData"></datalist><button type="button" class="btn btn-outline" onclick="abrirModalClienteForm()"><i class="fas fa-plus"></i> Novo</button>
+      </div>
+    </div>
+    <div class="form-field"><label>Celular</label><input id="agendaCelular"></div><div class="form-field"><label>Barbeiro</label><input id="agendaBarbeiro" list="listaBarbeirosData"><datalist id="listaBarbeirosData"></datalist></div>
+    <div class="form-field"><label>Serviço*</label><input id="agendaServico" list="listaServicosData" required><datalist id="listaServicosData"></datalist></div>
+    <div class="form-field"><label>Status</label><select id="agendaStatus"><option>Agendado</option><option>Concluído</option><option>Cancelado</option></select></div>
+    <div class="form-field full-width"><label>Observações</label><textarea id="agendaObs" rows="2"></textarea></div></div>
+    <div style="display:flex; justify-content:flex-end; gap: 10px;"><button type="button" class="btn btn-outline" onclick="fecharModal('modalAgendamento')">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
+    </form>
+  </div>
+</div>
+
+<div id="modalProduto" class="modal" style="z-index: 1050;">
+  <div class="modal-content"><h3><i class="fas fa-box"></i> Cadastrar Produto</h3>
+    <form id="formProduto"><input type="hidden" id="produtoId">
+    <div class="form-field"><label>Estoque Atual</label><input type="number" id="produtoEstoque" value="0"></div>
+    <div class="form-grid"><div class="form-field full-width"><label>Nome do Produto*</label><input id="produtoNome" required></div>
+    <div class="form-field"><label>Categoria</label><input id="produtoCategoria"></div>
+    <div class="form-field"><label>Unidade (ex: un, ml)</label><input id="produtoUnidade"></div>
+    <div class="form-field"><label>Custo (R$)</label><input type="number" step="0.01" id="produtoCusto"></div>
+    <div class="form-field"><label>Preço de Venda (R$)</label><input type="number" step="0.01" id="produtoPreco"></div>
+    <div class="form-field full-width"><label>Estoque Mínimo Alerta</label><input type="number" id="produtoMinimo" value="0"></div>
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:10px;"><button type="button" class="btn btn-outline" onclick="fecharModal('modalProduto')">Cancelar</button><button type="submit" class="btn btn-primary">Salvar Produto</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+  let usuarioAtual = { nome: '', nivel: '' };
+  let todosAgendamentos = [];
+  let listaDeClientes = [];
+  let clienteFichaAtual = {};
+  let produtosEstoque = []; 
+  let dadosFinanceirosAtuais = [];
+  let configData = { precos: [], barbeiros: [], formasPagamento: [] };
+  let chartInst1, chartInst2, chartInst3;
+
+  // ==================== INICIALIZAÇÃO ====================
+  function fazerLogin() {
+    const login = document.getElementById('loginUser').value;
+    const senha = document.getElementById('loginPass').value;
+    if (!login || !senha) return;
+    google.script.run.withSuccessHandler(res => {
+      if (res.success) {
+        usuarioAtual = { nome: res.nome, nivel: res.nivel };
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('mainApp').style.display = 'block';
+        document.getElementById('filtroData').value = new Date().toISOString().split('T')[0];
+        
+        if (res.nivel === 'ADMIN') {
+          document.getElementById('estoqueNav').style.display = 'flex';
+          document.getElementById('configNav').style.display = 'flex';
         }
+        
+        carregarConfigData();
+        carregarClientesGlobal();
+        carregarDadosAgenda();
+        carregarDashboard();
+        carregarProdutosVenda();
+        mostrarPagina('dashboard');
+      } else { Swal.fire('Negado', 'Credenciais inválidas', 'error'); }
+    }).autenticar(login, senha);
+  }
 
-        // Soma os valores por mês para o Gráfico de Linha
-        if(!mesesMap[mesAno]) mesesMap[mesAno] = 0; 
-        mesesMap[mesAno] += t.valor || 0;
+  function mostrarPagina(pageId) {
+    document.querySelectorAll('.page-content').forEach(p => p.style.display = 'none');
+    document.getElementById(`page${pageId.charAt(0).toUpperCase() + pageId.slice(1)}`).style.display = 'block';
+    document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+    document.querySelector(`.nav-item[data-page="${pageId}"]`).classList.add('active');
+    
+    if (pageId === 'clientes') carregarTabelaClientesVisual();
+    if (pageId === 'financeiro') carregarFinanceiro();
+    if (pageId === 'dashboard') carregarDashboard();
+    if (pageId === 'config') renderizarConfigUI();
+    if (pageId === 'vendas' || pageId === 'estoque') carregarProdutosVenda();
+  }
+
+  window.addEventListener('click', e => { if (e.target.classList.contains('modal')) e.target.style.display = 'none'; });
+  function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
+
+  // ==================== CONFIGS ====================
+  function carregarConfigData() {
+    google.script.run.withSuccessHandler(data => {
+      configData = data;
+      const preencherSelect = (id, array, isDatalist = false) => {
+        const el = document.getElementById(id);
+        if(!el) return;
+        el.innerHTML = isDatalist ? '' : '<option value="">-- Selecione --</option>';
+        array.forEach(item => el.innerHTML += `<option value="${item}">${isDatalist ? '' : item}</option>`);
+      };
+
+      preencherSelect('listaBarbeirosData', configData.barbeiros, true);
+      preencherSelect('finBarbeiro', configData.barbeiros, false);
+      preencherSelect('vendaBarbeiro', configData.barbeiros, false);
+      preencherSelect('editFinBarbeiro', configData.barbeiros, false);
+      preencherSelect('vendaPagamento', configData.formasPagamento, false);
+      preencherSelect('editFinForma', configData.formasPagamento, false);
+      
+      const elServ = document.getElementById('listaServicosData');
+      if(elServ) { elServ.innerHTML = ''; configData.precos.forEach(p => elServ.innerHTML += `<option value="${p.tipo}">`); }
+      if(document.getElementById('pageConfig').style.display === 'block') renderizarConfigUI();
+    }).getConfiguracoesCompletas();
+  }
+
+  function renderizarConfigUI() {
+    const tbody = document.querySelector('#tabelaPrecos tbody');
+    tbody.innerHTML = '';
+    configData.precos.forEach((p, idx) => {
+      tbody.innerHTML += `<tr><td>${p.tipo}</td><td>R$ ${p.preco.toFixed(2)}</td><td><button class="btn btn-danger btn-sm" onclick="removerConfigItem('precos', ${idx})"><i class="fas fa-trash"></i></button></td></tr>`;
+    });
+    const renderLista = (arrayId, ulId) => {
+      const ul = document.getElementById(ulId); ul.innerHTML = '';
+      configData[arrayId].forEach((item, idx) => { ul.innerHTML += `<li>${item} <button class="btn btn-danger btn-sm" onclick="removerConfigItem('${arrayId}', ${idx})"><i class="fas fa-trash"></i></button></li>`; });
+    };
+    renderLista('barbeiros', 'listaBarbeirosUI');
+    renderLista('formasPagamento', 'listaFormasPagUI');
+  }
+
+  function adicionarTabelaPreco() {
+    const tipo = document.getElementById('novoServicoTipo').value.trim();
+    const preco = parseFloat(document.getElementById('novoServicoPreco').value);
+    if (!tipo || isNaN(preco)) return Swal.fire('Atenção', 'Preencha dados válidos', 'warning');
+    configData.precos.push({ tipo, preco }); document.getElementById('novoServicoTipo').value = ''; document.getElementById('novoServicoPreco').value = ''; renderizarConfigUI();
+  }
+  function adicionarConfigItem(arrayId, inputId) { const val = document.getElementById(inputId).value.trim(); if (!val) return; configData[arrayId].push(val); document.getElementById(inputId).value = ''; renderizarConfigUI(); }
+  function removerConfigItem(arrayId, idx) { configData[arrayId].splice(idx, 1); renderizarConfigUI(); }
+  function salvarTodasConfiguracoes() { Swal.fire({ title: 'Salvando...', didOpen: () => Swal.showLoading() }); google.script.run.withSuccessHandler(() => { Swal.fire('Salvo!', '', 'success'); carregarConfigData(); }).salvarConfiguracoesAPI(configData); }
+
+  // ==================== DASHBOARD & GRÁFICOS ====================
+ function carregarDashboard() {
+    google.script.run.withSuccessHandler(dados => {
+      document.getElementById('dashFatHoje').innerText = `R$ ${dados.faturamentoHoje.toFixed(2).replace('.',',')}`;
+      document.getElementById('dashFatMes').innerText = `R$ ${dados.faturamentoMes.toFixed(2).replace('.',',')}`;
+      
+      const elCli = document.getElementById('dashCliMes');
+      if(elCli) elCli.innerText = dados.clientesUnicosMes || 0;
+      
+      document.getElementById('dashTicket').innerText = `R$ ${dados.ticketMedio.toFixed(2).replace('.',',')}`;
+      
+      // Só tenta renderizar se a variável graficos existir
+      if(dados.graficos) {
+        renderizarGraficos(dados.graficos);
       }
-    }
-
-    // Conta os serviços para o Gráfico de Pizza
-    if (t.servico) { 
-      if(!cortesMaisVendidos[t.servico]) cortesMaisVendidos[t.servico] = 0; 
-      cortesMaisVendidos[t.servico]++; 
-    }
-
-    // Soma o faturamento por barbeiro para o Gráfico de Barras
-    if (t.barbeiro) { 
-      if(!rankingBarbeiros[t.barbeiro]) rankingBarbeiros[t.barbeiro] = 0; 
-      rankingBarbeiros[t.barbeiro] += t.valor || 0; 
-    }
-  });
-
-  // Ordena os meses cronologicamente (pega os últimos 6)
-  const sortedMeses = Object.keys(mesesMap).sort((a, b) => { 
-    let [ma, ya] = a.split('/'); let [mb, yb] = b.split('/'); 
-    return new Date(ya, ma - 1) - new Date(yb, mb - 1); 
-  }).slice(-6);
+    }).getMetricasDashboard();
+  }
   
-  sortedMeses.forEach(m => { 
-    faturamentoMensalChart.labels.push(m); 
-    faturamentoMensalChart.dados.push(mesesMap[m]); 
+function renderizarGraficos(graficos) {
+    if (typeof Chart === 'undefined') {
+      console.warn("Biblioteca de gráficos não carregada.");
+      return;
+    }
+    if (!graficos) return;
+
+    if(window.chartInst1) window.chartInst1.destroy(); 
+    if(window.chartInst2) window.chartInst2.destroy(); 
+    if(window.chartInst3) window.chartInst3.destroy();
+
+    const cv1 = document.getElementById('chartFaturamento');
+    if (cv1 && graficos.faturamentoMensal) {
+      window.chartInst1 = new Chart(cv1.getContext('2d'), { 
+        type: 'line', 
+        data: { labels: graficos.faturamentoMensal.labels, datasets: [{ label: 'Faturamento (R$)', data: graficos.faturamentoMensal.dados, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.3 }] }, 
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } } 
+      });
+    }
+
+    const cv2 = document.getElementById('chartServicos');
+    if (cv2 && graficos.topServicos) {
+      let labels = graficos.topServicos.labels || [];
+      let dados = (graficos.topServicos.dados || []).map(v => { let num = Number(v); return isNaN(num) || !isFinite(num) ? 0 : num; });
+      const filtered = labels.reduce((acc, label, idx) => { if (dados[idx] > 0) { acc.labels.push(label); acc.dados.push(dados[idx]); } return acc; }, { labels: [], dados: [] });
+      if (filtered.labels.length === 0) { filtered.labels = ['Sem dados']; filtered.dados = [1]; }
+      
+      window.chartInst2 = new Chart(cv2.getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: filtered.labels, datasets: [{ data: filtered.dados, backgroundColor: ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6', '#94a3b8'] }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+
+    const cv3 = document.getElementById('chartBarbeiros');
+    if (cv3 && graficos.topBarbeiros) {
+      const labels = graficos.topBarbeiros.labels || [];
+      const dados = (graficos.topBarbeiros.dados || []).map(v => typeof v === 'number' ? v : 0);
+      window.chartInst3 = new Chart(cv3.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ label: 'Faturamento (R$)', data: dados, backgroundColor: '#3b82f6' }] },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+    }
+  }
+
+  
+
+ // ==================== FINANCEIRO ====================
+function carregarFinanceiro() {
+    const inputBusca = document.getElementById('buscaFinanceiroGlob');
+    if (inputBusca) inputBusca.value = '';
+    
+    const tbody = document.querySelector('#tabelaFinanceiro tbody');
+    if(tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando todos os lançamentos...</td></tr>';
+    
+    google.script.run
+      .withSuccessHandler(ts => { 
+        dadosFinanceirosAtuais = ts || []; 
+        renderizarTabelaFinanceiro(dadosFinanceirosAtuais); 
+      })
+      .withFailureHandler(err => {
+        // Agora ele te avisa na cara do gol se der erro
+        if(tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:red; font-weight:bold;">Erro: ${err.message}</td></tr>`;
+      })
+      .getDadosFinanceiros(null, null, null);
+  }
+  
+ function renderizarTabelaFinanceiro(dados) {
+    const tbody = document.querySelector('#tabelaFinanceiro tbody');
+    if(!tbody) return;
+    tbody.innerHTML = '';
+    
+    if(!dados || dados.length === 0) { 
+       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Nenhum lançamento encontrado.</td></tr>'; 
+       return; 
+    }
+    
+    dados.forEach(t => {
+       tbody.innerHTML += `<tr>
+         <td>${t.data || '-'}</td>
+         <td><b>${t.cliente || '-'}</b></td>
+         <td>${t.servico || '-'}</td>
+         <td>${t.barbeiro || '-'}</td>
+         <td><span class="status-badge">${t.forma || '-'}</span></td>
+         <td style="color:#059669; font-weight:bold;">R$ ${parseFloat(t.valor || 0).toFixed(2)}</td>
+         <td style="display: flex; gap: 6px;">
+            <button class="btn btn-outline btn-sm" onclick="abrirEdicaoFinanceiro(${t.linha})"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline btn-sm" style="color:#ef4444; border-color:#fca5a5;" onclick="excluirFinanceiro(${t.linha}, '${t.id || ''}')"><i class="fas fa-trash"></i></button>
+         </td>
+       </tr>`;
+    });
+  }
+
+ function filtrarTabelaFinanceiroLocal() {
+    const term = document.getElementById('buscaFinanceiroGlob').value.toLowerCase();
+    if(!dadosFinanceirosAtuais) return;
+    
+    // BLINDAGEM: Garante que é tudo texto para não estourar erro do "toLowerCase"
+    const filtrados = dadosFinanceirosAtuais.filter(t => 
+      String(t.cliente || '').toLowerCase().includes(term) || 
+      String(t.servico || '').toLowerCase().includes(term) || 
+      String(t.forma || '').toLowerCase().includes(term) ||
+      String(t.barbeiro || '').toLowerCase().includes(term) ||
+      String(t.data || '').toLowerCase().includes(term)
+    );
+    
+    renderizarTabelaFinanceiro(filtrados);
+  }
+
+  function abrirEdicaoFinanceiro(linhaReal) {
+    // Procura na memória exatamente a linha correspondente, não importando a ordem da pesquisa
+    const t = dadosFinanceirosAtuais.find(item => item.linha === linhaReal);
+    if(!t) return;
+    
+    document.getElementById('editFinLinha').value = t.linha; 
+    document.getElementById('editFinData').value = t.data; 
+    document.getElementById('editFinBarbeiro').value = t.barbeiro; 
+    document.getElementById('editFinCliente').value = t.cliente; 
+    document.getElementById('editFinServico').value = t.servico; 
+    document.getElementById('editFinForma').value = t.forma; 
+    document.getElementById('editFinValor').value = t.valor;
+    
+    document.getElementById('modalEditarFinanceiro').style.display = 'flex';
+  }
+
+  document.getElementById('formEdicaoFinanceiro').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const dados = { linha: document.getElementById('editFinLinha').value, data: document.getElementById('editFinData').value, barbeiro: document.getElementById('editFinBarbeiro').value, cliente: document.getElementById('editFinCliente').value, servico: document.getElementById('editFinServico').value, forma: document.getElementById('editFinForma').value, valor: document.getElementById('editFinValor').value };
+    Swal.fire({ title: 'Atualizando...', didOpen: () => Swal.showLoading() });
+    google.script.run.withSuccessHandler(() => { fecharModal('modalEditarFinanceiro'); Swal.fire('Salvo', '', 'success'); carregarFinanceiro(); }).atualizarEdicaoFinanceiro(dados);
   });
 
-  let servicosOrdenados = Object.entries(cortesMaisVendidos).sort((a,b) => b[1] - a[1]).slice(0,5);
-  let chartServicos = { labels: servicosOrdenados.map(s => s[0]), dados: servicosOrdenados.map(s => s[1]) };
+  window.excluirFinanceiro = async function(linha, idControle) {
+    const { isConfirmed } = await Swal.fire({
+      title: 'Excluir Lançamento?',
+      text: 'O valor será apagado do financeiro.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      confirmButtonText: 'Sim, excluir'
+    });
 
-  let barbeirosOrdenados = Object.entries(rankingBarbeiros).sort((a,b) => b[1] - a[1]);
-  let chartBarbeiros = { labels: barbeirosOrdenados.map(b => b[0]), dados: barbeirosOrdenados.map(b => b[1]) };
+    if (isConfirmed) {
+      Swal.fire({ title: 'Excluindo...', didOpen: () => Swal.showLoading() });
 
-  const ticketMedio = clientesAtendidos.size > 0 ? (faturamentoMes / clientesAtendidos.size) : 0;
+      google.script.run.withSuccessHandler(async (res) => {
+        if (res.success) {
+          // Se o lançamento pertencia à agenda, dispara o segundo aviso
+          if (res.temAgenda) {
+            const resAgenda = await Swal.fire({
+              title: 'Atenção na Agenda!',
+              text: 'O status na agenda voltou para "Agendado". Deseja excluir também o agendamento?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonColor: '#ef4444',
+              cancelButtonText: 'Não, manter agendado',
+              confirmButtonText: 'Sim, excluir agendamento'
+            });
 
-  // Retorna os dados E a variável graficos que faltava
-  return { 
-    faturamentoHoje, 
-    faturamentoMes, 
-    ticketMedio, 
-    clientesUnicosMes: clientesAtendidos.size, 
-    baixoEstoque: [], 
-    graficos: { 
-      faturamentoMensal: faturamentoMensalChart, 
-      topServicos: chartServicos, 
-      topBarbeiros: chartBarbeiros 
-    } 
-  };
-}
-
-// NOVO: Exclusão de Financeiro integrada com Agenda
-function excluirLancamentoFinanceiro(linha, idControle) {
-  const sheetFin = getSheetFinanceiro();
-  if (!sheetFin) return { success: false, msg: 'Aba financeiro não encontrada' };
-
-  // 1. Deleta a linha do financeiro
-  sheetFin.deleteRow(linha);
-
-  let temAgenda = false;
-
-  // 2. Se esse lançamento veio da agenda, desfaz o status
-  if (idControle && String(idControle).trim() !== '') {
-    const sheetAgenda = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
-    if (sheetAgenda) {
-      const dataAgenda = sheetAgenda.getDataRange().getValues();
-      const headersAgenda = dataAgenda[0].map(h => String(h).toUpperCase().trim());
-      const colId = headersAgenda.indexOf('ID');
-      const colStatus = headersAgenda.indexOf('STATUS');
-
-      if (colId !== -1 && colStatus !== -1) {
-        // i = 1 para pular o cabeçalho
-        for (let i = 1; i < dataAgenda.length; i++) {
-          if (String(dataAgenda[i][colId]) === String(idControle)) {
-            // Reverte o status
-            sheetAgenda.getRange(i + 1, colStatus + 1).setValue('Agendado');
-            temAgenda = true;
-            break;
+            if (resAgenda.isConfirmed) {
+              Swal.fire({ title: 'Excluindo da Agenda...', didOpen: () => Swal.showLoading() });
+              google.script.run.withSuccessHandler(() => {
+                Swal.fire('Totalmente Excluído!', 'Financeiro e Agenda apagados.', 'success');
+                carregarFinanceiro();
+                carregarDadosAgenda(); 
+              }).excluirAgendamento(res.idAgenda, usuarioAtual.nome);
+              return; // Para aqui, pois já mandou excluir a agenda
+            }
           }
+          
+          // Se não tiver agenda associada ou o usuário optou por "Não"
+          Swal.fire('Financeiro Excluído!', '', 'success');
+          carregarFinanceiro();
+          carregarDadosAgenda(); // Sempre atualiza pra garantir o status real
+        } else {
+          Swal.fire('Erro', res.msg || 'Falha ao excluir.', 'error');
         }
+      }).excluirLancamentoFinanceiro(linha, idControle);
+    }
+  };
+
+
+  // ==================== PDV / VENDAS E ESTOQUE ====================
+  function carregarProdutosVenda() {
+    google.script.run.withSuccessHandler(produtos => {
+      produtosEstoque = produtos;
+      const select = document.getElementById('vendaProduto');
+      if(select) {
+        select.innerHTML = '<option value="">-- Escolha o Produto --</option>';
+        produtos.forEach(p => { let pre = p.PRECO || p['PREÇO'] || 0; select.innerHTML += `<option value="${p.PRODUTO}" data-preco="${pre}">Estoque: ${p['ESTOQUE ATUAL']||0} | ${p.PRODUTO}</option>`; });
       }
+      const tbody = document.querySelector('#tabelaEstoque tbody');
+      if(tbody) {
+        tbody.innerHTML = '';
+        produtos.forEach(p => { tbody.innerHTML += `<tr><td>${p.PRODUTO}</td><td>${p.CATEGORIA||'-'}</td><td>${p['ESTOQUE ATUAL']||0} ${p.UNIDADE||''}</td><td>R$ ${parseFloat(p.CUSTO||0).toFixed(2)}</td><td>R$ ${parseFloat(p.PRECO||p['PREÇO']||0).toFixed(2)}</td><td><button class="btn btn-outline btn-sm" onclick="editarProduto('${p.ID}')"><i class="fas fa-edit"></i></button></td></tr>`; });
+      }
+    }).getProdutos();
+  }
+
+  function atualizarPrecoVenda() { const s = document.getElementById('vendaProduto'); const opt = s.options[s.selectedIndex]; if(opt && opt.value) { document.getElementById('vendaPreco').value = opt.dataset.preco; atualizarTotalVenda(); } }
+  function atualizarTotalVenda() { const t = (parseFloat(document.getElementById('vendaQtd').value)||0) * (parseFloat(document.getElementById('vendaPreco').value)||0); document.getElementById('vendaTotalDisplay').innerText = `R$ ${t.toFixed(2).replace('.',',')}`; }
+
+  function finalizarVenda() {
+    const venda = { 
+      data: new Date().toISOString().split('T')[0], 
+      produto: document.getElementById('vendaProduto').value, 
+      cliente: document.getElementById('vendaCliente').value,
+      quantidade: parseFloat(document.getElementById('vendaQtd').value), 
+      precoUnitario: parseFloat(document.getElementById('vendaPreco').value), 
+      total: parseFloat(document.getElementById('vendaQtd').value) * parseFloat(document.getElementById('vendaPreco').value),
+      barbeiro: document.getElementById('vendaBarbeiro').value, formaPagamento: document.getElementById('vendaPagamento').value };
+
+    if(!venda.produto || !venda.formaPagamento) return Swal.fire('Atenção', 'Selecione produto e pagamento.', 'warning');
+    Swal.fire({ title: 'Processando Venda...', didOpen: () => Swal.showLoading() });
+    google.script.run.withSuccessHandler(res => {
+      if(res.success) { Swal.fire('Venda Concluída!', '', 'success'); document.getElementById('vendaProduto').value = ''; document.getElementById('vendaQtd').value = '1'; atualizarTotalVenda(); carregarProdutosVenda(); }
+      else { Swal.fire('Erro', res.msg, 'error'); }
+    }).realizarVendaProduto(venda, usuarioAtual.nome);
+  }
+
+  function abrirModalProduto() { document.getElementById('formProduto').reset(); document.getElementById('produtoId').value = ''; document.getElementById('modalProduto').style.display = 'flex'; }
+  function editarProduto(id) { const p = produtosEstoque.find(x => x.ID == id); if(p) { document.getElementById('produtoId').value = p.ID; document.getElementById('produtoNome').value = p.PRODUTO; document.getElementById('produtoCategoria').value = p.CATEGORIA; document.getElementById('produtoUnidade').value = p.UNIDADE; document.getElementById('produtoCusto').value = p.CUSTO||''; document.getElementById('produtoPreco').value = p.PRECO||p['PREÇO']||''; document.getElementById('produtoMinimo').value = p['ESTOQUE MINIMO']; document.getElementById('modalProduto').style.display = 'flex'; } }
+  document.getElementById('formProduto').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const prod = { ID: document.getElementById('produtoId').value, nome: document.getElementById('produtoNome').value, categoria: document.getElementById('produtoCategoria').value, unidade: document.getElementById('produtoUnidade').value, estoqueMinimo: document.getElementById('produtoMinimo').value, custo: document.getElementById('produtoCusto').value, preco: document.getElementById('produtoPreco').value };
+    Swal.fire({ title: 'Salvando...', didOpen: () => Swal.showLoading() });
+    google.script.run.withSuccessHandler(() => { fecharModal('modalProduto'); Swal.fire('Sucesso!', '', 'success'); carregarProdutosVenda(); }).salvarProduto(prod, usuarioAtual.nome);
+  });
+
+  // ==================== AGENDA E CLIENTES (MANTIDOS 100%) ====================
+  function carregarClientesGlobal() { google.script.run.withSuccessHandler(cls => { listaDeClientes = Array.isArray(cls)?cls:[]; const dl = document.getElementById('listaClientesData'); dl.innerHTML = ''; listaDeClientes.forEach(c => { const nome = c.Nome || c.Cliente || ''; if (nome) { const o = document.createElement('option'); o.value = nome; dl.appendChild(o); } }); if(document.getElementById('pageClientes').style.display === 'block') carregarTabelaClientesVisual(); }).getClientes(); }
+  document.getElementById('agendaCliente').addEventListener('input', function() { const v = this.value.toLowerCase(); const c = listaDeClientes.find(x => String(x.Nome||x.Cliente||'').toLowerCase() === v); if (c) document.getElementById('agendaCelular').value = c.Celular || c.Telefone || ''; });
+  function carregarTabelaClientesVisual() { const tb = document.querySelector('#tabelaClientes tbody'); tb.innerHTML = ''; if(!listaDeClientes.length) return tb.innerHTML = '<tr><td colspan="3">Nenhum cliente.</td></tr>'; listaDeClientes.forEach(c => { tb.innerHTML += `<tr><td><b>${c.Nome||c.Cliente||'-'}</b></td><td>${c.Celular||c.Telefone||'-'}</td><td><button class="btn btn-outline btn-sm" onclick="abrirFicha('${c.Nome||c.Cliente}')"><i class="fas fa-folder-open"></i> Ficha</button></td></tr>`; }); }
+  function filtrarTabelaClientes() { const term = document.getElementById('buscaClienteTb').value.toLowerCase(); document.querySelectorAll('#tabelaClientes tbody tr').forEach(r => r.style.display = r.cells[0].innerText.toLowerCase().includes(term) ? '' : 'none'); }
+  
+  function abrirFicha(nome) {
+    Swal.fire({ title: 'Buscando...', didOpen: () => Swal.showLoading() });
+    google.script.run.withSuccessHandler(f => {
+      Swal.close(); clienteFichaAtual = f.dados; document.getElementById('fichaNome').innerText = nome; document.getElementById('fichaCelular').innerHTML = `<i class="fas fa-phone"></i> ${f.dados.Celular || f.dados.Telefone || '-'}`; document.getElementById('fichaTotalGasto').innerText = `R$ ${f.resumo.totalGasto.toFixed(2)}`; document.getElementById('fichaQtdVisitas').innerText = f.resumo.qtdVisitas; document.getElementById('fichaUltimaVisita').innerText = f.resumo.ultimaVisita; document.getElementById('fichaDadosPessoais').innerHTML = `<div><strong>Apelido</strong> ${f.dados.Apelido||'-'}</div><div><strong>CPF</strong> ${f.dados.CPF||'-'}</div><div><strong>E-mail</strong> ${f.dados.Email||'-'}</div><div style="grid-column:1/-1;"><strong>Endereço</strong> ${f.dados.Endereco||''} - ${f.dados.Bairro||''} - ${f.dados.Cidade||''}</div>`;
+      const tb = document.getElementById('fichaHistoricoTb'); tb.innerHTML = ''; if(!f.historico.length) tb.innerHTML = '<tr><td colspan="4">Nenhum atendimento.</td></tr>'; else f.historico.forEach(h => tb.innerHTML += `<tr><td>${h.data}</td><td>${h.servico}</td><td>${h.barbeiro}</td><td>R$ ${h.valor.toFixed(2)}</td></tr>`);
+      document.getElementById('modalFichaCliente').style.display = 'flex';
+    }).obterFichaCompleta(nome);
+  }
+  function abrirModalClienteForm() { document.getElementById('formClienteCompleto').reset(); document.getElementById('formCliId').value = ''; document.getElementById('modalClienteForm').style.display = 'flex'; }
+  function editarClienteAtual() { document.getElementById('formCliId').value = clienteFichaAtual.ID||''; document.getElementById('formCliNome').value = clienteFichaAtual.Nome||clienteFichaAtual.Cliente||''; document.getElementById('formCliCelular').value = clienteFichaAtual.Celular||''; document.getElementById('formCliCpf').value = clienteFichaAtual.CPF||''; let n = clienteFichaAtual.Nascimento||''; if(n.includes('/')) n = n.split('/').reverse().join('-'); document.getElementById('formCliNasc').value = n; document.getElementById('formCliEmail').value = clienteFichaAtual.Email||''; document.getElementById('formCliEnd').value = clienteFichaAtual.Endereco||''; document.getElementById('formCliBairro').value = clienteFichaAtual.Bairro||''; document.getElementById('formCliCidade').value = clienteFichaAtual.Cidade||''; document.getElementById('formCliObs').value = clienteFichaAtual.OBS||''; fecharModal('modalFichaCliente'); document.getElementById('modalClienteForm').style.display = 'flex'; }
+  document.getElementById('formClienteCompleto').addEventListener('submit', e => { e.preventDefault(); const d = { ID: document.getElementById('formCliId').value, Nome: document.getElementById('formCliNome').value, Apelido: document.getElementById('formCliApelido').value, Celular: document.getElementById('formCliCelular').value, CPF: document.getElementById('formCliCpf').value, Nascimento: document.getElementById('formCliNasc').value, Email: document.getElementById('formCliEmail').value, Endereco: document.getElementById('formCliEnd').value, Bairro: document.getElementById('formCliBairro').value, Cidade: document.getElementById('formCliCidade').value, Obs: document.getElementById('formCliObs').value }; Swal.fire({ title: 'Salvando...', didOpen:()=>Swal.showLoading() }); google.script.run.withSuccessHandler(r => { fecharModal('modalClienteForm'); Swal.fire('Salvo!', '', 'success'); document.getElementById('agendaCliente').value = r.clienteNome; carregarClientesGlobal(); }).salvarClienteCompleto(d, usuarioAtual.nome); });
+
+  function carregarDadosAgenda() { google.script.run.withSuccessHandler(d => { todosAgendamentos = d; renderizarAgenda(); }).getAgendamentos(); }
+  
+  // Função auxiliar para o calendário mensal (clicar no dia e ir para ele)
+  window.mudarParaDia = function(dataStr) {
+    document.getElementById('filtroData').value = dataStr;
+    document.getElementById('filtroVisao').value = 'diario';
+    renderizarAgenda();
+  };
+
+  function renderizarAgenda() {
+    const dataFiltroStr = document.getElementById('filtroData').value;
+    const visao = document.getElementById('filtroVisao').value;
+    const container = document.getElementById('listaAgendamentos');
+    container.innerHTML = '';
+    if (!dataFiltroStr) return;
+
+    const dataRef = new Date(dataFiltroStr + 'T00:00:00');
+
+    // ================= VISÃO DIÁRIA (LISTA CLÁSSICA) =================
+    if (visao === 'diario') {
+      const filtrados = todosAgendamentos.filter(ag => ag.data === dataFiltroStr);
+      if (filtrados.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding: 40px; color: #94a3b8;"><i class="far fa-calendar-times" style="font-size: 32px; margin-bottom: 10px;"></i><br>Nenhum agendamento para este dia.</div>`;
+        return;
+      }
+      
+      const dataFormatada = dataFiltroStr.split('-').reverse().join('/');
+      container.innerHTML = `<div style="margin-top:10px; font-weight:bold; color:#64748b; border-bottom:1px solid #e2e8f0; padding-bottom:5px;"><i class="far fa-calendar-alt"></i> ${dataFormatada}</div>`;
+      
+      filtrados.sort((a, b) => a.hora.localeCompare(b.hora)).forEach(ag => {
+        let btnCheckout = ag.status !== 'Concluído' && ag.status !== 'Cancelado' ? `<button class="btn btn-success btn-sm" onclick='abrirCheckout(${JSON.stringify(ag)})' title="Finalizar"><i class="fas fa-check"></i></button>` : '';
+        
+        let btnWhatsApp = '';
+        if(ag.celular) {
+          let numeroLimpo = String(ag.celular).replace(/\D/g, '');
+          if (numeroLimpo.length === 10 || numeroLimpo.length === 11) numeroLimpo = '55' + numeroLimpo;
+          let msg = encodeURIComponent(`Olá ${ag.cliente}, tudo bem? Passando para confirmar seu agendamento de ${ag.servico} com ${ag.barbeiro} no dia ${dataFormatada} às ${ag.hora}.`);
+          btnWhatsApp = `<a href="https://wa.me/${numeroLimpo}?text=${msg}" target="_blank" class="btn btn-outline btn-sm" style="color: #10b981; border-color: #a7f3d0;"><i class="fab fa-whatsapp"></i></a>`;
+        }
+
+        let corBadge = ag.status === 'Concluído' ? '#d1fae5' : (ag.status === 'Cancelado' ? '#fee2e2' : '#dbeafe');
+        let corTextoBadge = ag.status === 'Concluído' ? '#065f46' : (ag.status === 'Cancelado' ? '#991b1b' : '#1e40af');
+
+        container.innerHTML += `
+          <div class="agenda-card">
+            <div style="display:flex; gap:15px; align-items:center;">
+              <div class="agenda-hora">${ag.hora}</div>
+              <div>
+                <h4 style="margin:0;">${ag.cliente} <span class="status-badge" style="background:${corBadge}; color:${corTextoBadge};">${ag.status}</span></h4>
+                <p style="margin:0; font-size:13px; color:#64748b;">${ag.servico} | ${ag.barbeiro}</p>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              ${btnWhatsApp}
+              <button class="btn btn-outline btn-sm" style="color: #ef4444; border-color: #fca5a5;" onclick="deletarAgendamento('${ag.id}')"><i class="fas fa-trash"></i></button>
+              <button class="btn btn-outline btn-sm" onclick='editarAgendamento(${JSON.stringify(ag)})'><i class="fas fa-edit"></i></button>
+              ${btnCheckout}
+            </div>
+          </div>
+        `;
+      });
+    } 
+    
+    // ================= VISÃO SEMANAL (7 COLUNAS) =================
+    else if (visao === 'semanal') {
+      const domingo = new Date(dataRef);
+      domingo.setDate(domingo.getDate() - domingo.getDay()); // Acha o domingo da semana atual
+
+      let html = '<div class="agenda-semana-grid">';
+      
+      for (let i = 0; i < 7; i++) {
+        const diaAtual = new Date(domingo);
+        diaAtual.setDate(domingo.getDate() + i);
+        const diaStr = diaAtual.toISOString().split('T')[0];
+        const diaFormatado = diaAtual.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).toUpperCase();
+        
+        const agsDoDia = todosAgendamentos.filter(ag => ag.data === diaStr);
+        
+        // Verifica se é o dia selecionado para dar um destaque visual
+        const isHoje = (diaStr === dataFiltroStr) ? 'border-color: #667eea; background: #ebf4ff;' : '';
+
+        html += `<div class="agenda-dia-coluna" style="${isHoje}">`;
+        html += `<h4 style="text-align: center; margin-bottom: 15px; color: #475569; font-size: 13px;">${diaFormatado}</h4>`;
+        
+        if (agsDoDia.length === 0) {
+          html += `<div style="text-align: center; color: #94a3b8; font-size: 12px; padding: 20px 0;">Livre</div>`;
+        } else {
+          agsDoDia.sort((a, b) => a.hora.localeCompare(b.hora)).forEach(ag => {
+            let corBorda = ag.status === 'Concluído' ? '#10b981' : (ag.status === 'Cancelado' ? '#ef4444' : '#667eea');
+            html += `
+              <div class="mini-card" style="border-left-color: ${corBorda}; cursor: pointer;" onclick='editarAgendamento(${JSON.stringify(ag)})'>
+                <div style="font-weight: 800; font-size: 15px; color: ${corBorda}; margin-bottom: 4px;">${ag.hora}</div>
+                <div style="font-weight: 600; font-size: 13px; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ag.cliente.split(' ')[0]}</div>
+                <div style="font-size: 11px; color: #64748b;">${ag.barbeiro}</div>
+              </div>
+            `;
+          });
+        }
+        html += `</div>`;
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // ================= VISÃO MENSAL (CALENDÁRIO) =================
+    else if (visao === 'mensal') {
+      const ano = dataRef.getFullYear();
+      const mes = dataRef.getMonth();
+      const primeiroDia = new Date(ano, mes, 1);
+      const ultimoDia = new Date(ano, mes + 1, 0);
+      const diasNoMes = ultimoDia.getDate();
+      const startDayOfWeek = primeiroDia.getDay(); // 0 a 6
+      const VAGAS_POR_DIA = parseInt(document.getElementById('configVagasDia').value) || 10;
+
+      let html = `<div style="text-align:center; font-weight:800; font-size: 20px; margin-bottom: 20px; color: #1e293b; text-transform: uppercase;">
+                    <i class="far fa-calendar"></i> ${primeiroDia.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                  </div>`;
+                  
+      html += '<div class="agenda-mes-grid">';
+      
+      const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+      diasSemana.forEach(d => {
+         html += `<div style="text-align: center; font-weight: 700; color: #64748b; font-size: 13px;">${d}</div>`;
+      });
+
+      // Espaços vazios antes do dia 1
+      for (let i = 0; i < startDayOfWeek; i++) {
+         html += `<div class="calendario-vazio"></div>`;
+      }
+
+      // Dias do mês
+      for (let d = 1; d <= diasNoMes; d++) {
+         const dataAtualStr = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+         const qtdAgendados = todosAgendamentos.filter(ag => ag.data === dataAtualStr && ag.status !== 'Cancelado').length;
+         const livres = Math.max(0, VAGAS_POR_DIA - qtdAgendados);
+
+         // Lógica de cores baseada na ocupação
+         let bgCor = qtdAgendados === 0 ? '#f8fafc' : (livres === 0 ? '#fee2e2' : '#d1fae5');
+         let txtCor = qtdAgendados === 0 ? '#94a3b8' : (livres === 0 ? '#991b1b' : '#065f46');
+         let isHoje = (dataAtualStr === dataFiltroStr) ? 'border: 2px solid #667eea;' : '';
+
+         html += `
+           <div class="calendario-box" style="background: ${bgCor}; ${isHoje}" onclick="mudarParaDia('${dataAtualStr}')">
+             <div style="font-size: 22px; font-weight: 800; color: #1e293b; margin-bottom: 5px;">${d}</div>
+             <div style="font-size: 11px; color: ${txtCor}; font-weight: 700;">${qtdAgendados > 0 ? qtdAgendados + ' Agendados' : 'Sem agenda'}</div>
+             <div style="font-size: 11px; color: #64748b; font-weight: 500; margin-top: 3px;">${livres} Livres</div>
+           </div>
+         `;
+      }
+      html += '</div>';
+      container.innerHTML = html;
     }
   }
 
-  return { success: true, temAgenda: temAgenda, idAgenda: idControle };
-}
 
-// ==================== EVOLUÇÃO / HISTÓRICO ====================
-function registrarEvolucao(cliente, barbeiro, estilo, observacoes) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.EVOLUCAO);
-  if (sheet) {
-    sheet.appendRow([
-      new Date().getTime(), 
-      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy"), 
-      cliente, 
-      barbeiro, 
-      estilo, 
-      observacoes
-    ]);
-  }
-}
+  function abrirModalAgendamento() { document.getElementById('formAgendamento').reset(); document.getElementById('agendaId').value=''; document.getElementById('agendaData').value=document.getElementById('filtroData').value; document.getElementById('modalAgendamento').style.display='flex'; }
+  window.editarAgendamento = (ag) => { document.getElementById('agendaId').value=ag.id; document.getElementById('agendaData').value=ag.data; document.getElementById('agendaHora').value=ag.hora; document.getElementById('agendaCliente').value=ag.cliente; document.getElementById('agendaCelular').value=ag.celular; document.getElementById('agendaBarbeiro').value=ag.barbeiro; document.getElementById('agendaServico').value=ag.servico; document.getElementById('agendaStatus').value=ag.status; document.getElementById('agendaObs').value=ag.obs; document.getElementById('modalAgendamento').style.display='flex'; };
+  window.deletarAgendamento = async (id) => { const { isConfirmed } = await Swal.fire({ title: 'Excluir?', icon: 'warning', showCancelButton: true }); if(isConfirmed) { google.script.run.withSuccessHandler(()=>{carregarDadosAgenda();}).excluirAgendamento(id, usuarioAtual.nome); } };
+  
+ window.abrirCheckout = async function(ag) {
+    // 1. O sistema caça o preço do serviço do cliente lá nas configurações
+    let precoSugerido = 0;
+    const servicoConfig = configData.precos.find(p => p.tipo.toLowerCase() === (ag.servico || '').toLowerCase());
+    if (servicoConfig) precoSugerido = servicoConfig.preco;
 
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Barbearia Manager')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
+    // 2. Monta as opções de pagamento
+    let optionsPagamento = configData.formasPagamento.map(f => `<option value="${f}">${f}</option>`).join('');
+
+    const { value: formValues } = await Swal.fire({
+      title: 'Finalizar Atendimento',
+      html: `
+        <div style="text-align:left;">
+          <p><b>Cliente:</b> ${ag.cliente}</p>
+          <p><b>Serviço:</b> ${ag.servico}</p>
+          <hr style="margin: 10px 0;">
+          <label style="font-weight:bold; font-size:13px;">Valor Cobrado (R$):</label>
+          <input id="swal-valor" class="swal2-input" type="number" step="0.01" value="${precoSugerido}" style="width:90%;">
+          <label style="font-weight:bold; font-size:13px; margin-top:10px; display:block;">Forma de Pagamento:</label>
+          <select id="swal-forma" class="swal2-select" style="width:90%; padding:10px;">
+            ${optionsPagamento}
+          </select>
+        </div>
+      `,
+      focusConfirm: false,
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar e Receber',
+      preConfirm: () => {
+        return {
+          valor: document.getElementById('swal-valor').value,
+          forma: document.getElementById('swal-forma').value
+        }
+      }
+    });
+
+    if (formValues) {
+      if (!formValues.valor || !formValues.forma) return Swal.fire('Atenção', 'Preencha o valor e a forma de pagamento.', 'warning');
+      
+      Swal.fire({ title: 'Recebendo...', didOpen: () => Swal.showLoading() });
+      
+      // Envia os dados finalizados para dar baixa na agenda e entrar no caixa
+      const dadosFechamento = { id: ag.id, cliente: ag.cliente, servico: ag.servico, barbeiro: ag.barbeiro, valor: parseFloat(formValues.valor), forma: formValues.forma };
+      google.script.run.withSuccessHandler(() => {
+        Swal.fire('Atendimento Concluído!', 'O valor já está no caixa.', 'success');
+        carregarDadosAgenda();
+        carregarFinanceiro();
+        carregarDashboard();
+      }).finalizarAgendamentoCheckout(dadosFechamento, usuarioAtual.nome);
+    }
+  };
+  
+// ==================== ATIVADOR DO MENU LATERAL ====================
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', function() {
+      // Pega o nome da página (agenda, financeiro, vendas) e troca a tela
+      mostrarPagina(this.dataset.page);
+    });
+  });
+
+</script>
+</body>
+</html>
