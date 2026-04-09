@@ -238,7 +238,7 @@ function excluirAgendamento(id, usuario) {
   return { success: false };
 }
 
-// ==================== FINANCEIRO BLINDADO ====================
+// ==================== FINANCEIRO (SIMPLES E DIRETO) ====================
 function getSheetFinanceiro() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEETS.FINANCEIRO);
@@ -253,6 +253,7 @@ function getHeaderRowIndex(dataFin) {
   return 0;
 }
 
+// Lança o valor na coluna VALOR e o texto na coluna FORMA DE PAGAMENTO
 function lancarNoFinanceiro(agendamento, usuario) {
   const sheet = getSheetFinanceiro();
   if (!sheet || sheet.getLastColumn() < 1) return; 
@@ -266,50 +267,52 @@ function lancarNoFinanceiro(agendamento, usuario) {
   let novaLinha = new Array(headers.length).fill('');
   let dataBR = agendamento.data;
   if(dataBR && dataBR.includes('-')) dataBR = dataBR.split('-').reverse().join('/');
+  
   const valorNum = parseFloat(agendamento.valorLancamento.toString().replace(',', '.'));
-  const formaPag = String(agendamento.formaPagamento || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
-
-  let colunaValorEncontrada = false;
+  const formaPag = agendamento.formaPagamento; // Pega exatamente o texto que veio do select (ex: "PIX EMANUEL")
 
   headers.forEach((h, i) => {
     let hUpper = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
+    
     if (hUpper === 'DATA') novaLinha[i] = dataBR;
     else if (hUpper === 'BARBEIRO') novaLinha[i] = agendamento.barbeiro;
     else if (hUpper === 'CLIENTES' || hUpper === 'CLIENTE' || hUpper === 'NOME') novaLinha[i] = agendamento.cliente;
     else if (hUpper === 'TIPO DE CORTE' || hUpper === 'SERVICO') novaLinha[i] = agendamento.servico;
     else if (hUpper.includes('OBSERVA')) novaLinha[i] = agendamento.obs;
-    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) novaLinha[i] = agendamento.formaPagamento;
-    else if (hUpper === 'ID CONTROLE') novaLinha[i] = agendamento.id || new Date().getTime(); // Rastreabilidade
-    else if (formaPag && hUpper.includes(formaPag)) { novaLinha[i] = valorNum; colunaValorEncontrada = true; }
+    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) novaLinha[i] = formaPag; // Coloca a string da forma de pagamento
+    else if (hUpper === 'ID CONTROLE') novaLinha[i] = agendamento.id || new Date().getTime(); 
   });
 
-  if (!colunaValorEncontrada) {
-    headers.forEach((h, i) => {
-      if (!colunaValorEncontrada && String(h).toUpperCase().includes('VALOR')) {
-        novaLinha[i] = valorNum;
-        colunaValorEncontrada = true;
-      }
-    });
+  // Acha a coluna de Valor (a primeira que tiver a palavra VALOR no cabeçalho)
+  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
+  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
+  
+  if (idxValor !== -1) {
+    novaLinha[idxValor] = valorNum; // Coloca o dinheiro aqui
   }
+  
   sheet.appendRow(novaLinha);
 }
 
 function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
   const sheet = getSheetFinanceiro();
   if (!sheet || sheet.getLastRow() < 2) return [];
-  
   const data = sheet.getDataRange().getValues();
   if (data.length === 0) return [];
   
   const headerRowIdx = getHeaderRowIndex(data);
   const headers = data[headerRowIdx];
   const transacoes = [];
+  
   const inicio = filtroDataInicio ? new Date(filtroDataInicio) : null;
   const fim = filtroDataFim ? new Date(filtroDataFim) : null;
   
+  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
+  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
+
   for (let i = data.length - 1; i > headerRowIdx; i--) {
     if (!data[i].join('').trim()) continue;
-    let t = { linha: i + 1, id: '' }; // Exporta a linha real da planilha para permitir edição
+    let t = { linha: i + 1, id: '', valor: 0 }; 
     let dataTransacao = null;
     
     for (let j = 0; j < headers.length; j++) {
@@ -317,24 +320,22 @@ function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
       let val = data[i][j];
       
       if (h === 'DATA') {
-        if (val instanceof Date) {
-          dataTransacao = val;
-          t.data = Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy");
-        } else if (typeof val === 'string') {
-          let partes = val.split('/');
-          if (partes.length === 3) dataTransacao = new Date(`${partes[2]}-${partes[1]}-${partes[0]}`);
-          t.data = val;
-        }
+        if (val instanceof Date) { dataTransacao = val; t.data = Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy"); } 
+        else if (typeof val === 'string') { let p = val.split('/'); if (p.length === 3) dataTransacao = new Date(`${p[2]}-${p[1]}-${p[0]}`); t.data = val; }
       }
       else if (h === 'CLIENTES' || h === 'CLIENTE') t.cliente = val;
       else if (h === 'BARBEIRO') t.barbeiro = val;
       else if (h === 'TIPO DE CORTE' || h === 'SERVICO') t.servico = val;
       else if (h.includes('FORMA DE PAG')) t.forma = val;
       else if (h === 'ID CONTROLE') t.id = val;
-      else if (h.includes('VALOR') && val && !isNaN(parseFloat(val))) t.valor = (t.valor || 0) + parseFloat(val);
     }
     
-    if (t.valor || t.forma) { // Permite mostrar mesmo se o valor for 0 mas tiver forma
+    if (idxValor !== -1) {
+      let v = data[i][idxValor];
+      if (v && !isNaN(parseFloat(v))) t.valor = parseFloat(v);
+    }
+    
+    if (t.valor || t.forma) { 
       if (inicio && dataTransacao < inicio) continue;
       if (fim && dataTransacao > fim) continue;
       if (barbeiro && t.barbeiro !== barbeiro) continue;
@@ -344,26 +345,20 @@ function getDadosFinanceiros(filtroDataInicio, filtroDataFim, barbeiro = null) {
   return transacoes;
 }
 
-// NOVA FUNÇÃO: EDITA O FINANCEIRO DIRETO NA LINHA
 function atualizarEdicaoFinanceiro(dadosLancamento) {
   const sheet = getSheetFinanceiro();
   if (!sheet) return { success: false };
-  
   const linha = dadosLancamento.linha;
   const dataFin = sheet.getDataRange().getValues();
   const headerRowIdx = getHeaderRowIndex(dataFin);
   const headers = dataFin[headerRowIdx];
   
-  // Zera as colunas de valor antigas na linha para não somar/duplicar
-  for (let j = 0; j < headers.length; j++) {
-    let hUpper = String(headers[j]).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
-    if (hUpper.includes('VALOR')) sheet.getRange(linha, j + 1).setValue('');
-  }
-  
   const valorNum = parseFloat(dadosLancamento.valor);
-  const formaPag = String(dadosLancamento.forma).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
+  const formaPag = dadosLancamento.forma; // Mantém a string exata
 
-  // Reescreve a linha
+  let idxValor = headers.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
+  if (idxValor === -1) idxValor = headers.findIndex(h => String(h).toUpperCase().includes('VALOR'));
+
   headers.forEach((h, j) => {
     let hUpper = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim();
     let celula = sheet.getRange(linha, j + 1);
@@ -372,11 +367,57 @@ function atualizarEdicaoFinanceiro(dadosLancamento) {
     else if (hUpper === 'BARBEIRO') celula.setValue(dadosLancamento.barbeiro);
     else if (hUpper === 'CLIENTES' || hUpper === 'CLIENTE') celula.setValue(dadosLancamento.cliente);
     else if (hUpper === 'TIPO DE CORTE' || hUpper === 'SERVICO') celula.setValue(dadosLancamento.servico);
-    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) celula.setValue(dadosLancamento.forma);
-    else if (formaPag && hUpper.includes(formaPag)) celula.setValue(valorNum);
+    else if (hUpper === 'FORMA DE PAG' || hUpper.includes('FORMA PAG')) celula.setValue(formaPag);
+    
+    // Limpa colunas de valor que não são a principal (caso tenha sobrado lixo antigo)
+    else if (hUpper.includes('VALOR') && j !== idxValor) celula.setValue('');
   });
   
+  if (idxValor !== -1) {
+    sheet.getRange(linha, idxValor + 1).setValue(valorNum);
+  }
+  
   return { success: true };
+}
+
+function obterFichaCompleta(nomeCliente) {
+  const clientes = getClientes();
+  const dadosPessoais = clientes.find(c => String(c.Nome || c.Cliente).toLowerCase() === String(nomeCliente).toLowerCase()) || {};
+  const historico = []; let totalGasto = 0;
+  const sheetFinanceiro = getSheetFinanceiro();
+  
+  if (sheetFinanceiro && sheetFinanceiro.getLastRow() > 1) {
+    const dataFin = sheetFinanceiro.getDataRange().getValues();
+    const headerRowIdx = getHeaderRowIndex(dataFin);
+    const headFin = dataFin[headerRowIdx];
+    
+    let idxValor = headFin.findIndex(h => String(h).toUpperCase().trim() === 'VALOR' || String(h).toUpperCase().trim() === 'VALOR (R$)');
+    if (idxValor === -1) idxValor = headFin.findIndex(h => String(h).toUpperCase().includes('VALOR'));
+
+    for (let i = dataFin.length - 1; i > headerRowIdx; i--) {
+      if (!dataFin[i].join('').trim()) continue;
+      let isMatch = false; let t = { valor: 0 };
+      
+      headFin.forEach((h, j) => {
+        let hUp = String(h).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, "").trim(); 
+        let val = dataFin[i][j];
+        if ((hUp === 'CLIENTES' || hUp === 'CLIENTE' || hUp === 'NOME') && String(val).toLowerCase() === String(nomeCliente).toLowerCase()) isMatch = true;
+        
+        if (hUp === 'DATA') t.data = (val instanceof Date) ? Utilities.formatDate(val, Session.getScriptTimeZone(), "dd/MM/yyyy") : val;
+        if (hUp === 'BARBEIRO') t.barbeiro = val;
+        if (hUp === 'TIPO DE CORTE' || hUp === 'SERVICO') t.servico = val;
+        if (hUp.includes('FORMA DE PAG')) t.forma = val;
+      });
+      
+      if (idxValor !== -1) {
+        let v = dataFin[i][idxValor];
+        if (v && !isNaN(parseFloat(v))) t.valor = parseFloat(v);
+      }
+      
+      if (isMatch && t.valor > 0) { historico.push(t); totalGasto += t.valor; }
+    }
+  }
+  return { dados: dadosPessoais, historico: historico, resumo: { totalGasto: totalGasto, ultimaVisita: historico.length > 0 ? historico[0].data : 'Nunca', qtdVisitas: historico.length } };
 }
 
 // ==================== ESTOQUE E VENDAS (NOVO MOTOR) ====================
