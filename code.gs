@@ -482,11 +482,11 @@ function realizarVendaProduto(venda, usuario) {
   return { success: false, msg: 'Produto não encontrado' };
 }
 
-// (Mantenha as funções antigas salvarProduto e movimentarEstoque originais aqui se quiser gerenciar estoque normal)
 function salvarProduto(produto, usuario) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   let linhaExistente = -1;
+  
   if (produto.ID && sheet.getLastRow() > 1) {
     const colId = headers.findIndex(h => String(h).toUpperCase().trim() === 'ID') + 1;
     if(colId > 0) {
@@ -494,6 +494,7 @@ function salvarProduto(produto, usuario) {
       linhaExistente = ids.findIndex(id => String(id) === String(produto.ID)) + 2;
     }
   }
+  
   const novaLinha = new Array(headers.length).fill('');
   headers.forEach((h, i) => {
     let hUpper = h.toString().toUpperCase().trim();
@@ -502,10 +503,14 @@ function salvarProduto(produto, usuario) {
     else if (hUpper === 'CATEGORIA') novaLinha[i] = produto.categoria;
     else if (hUpper === 'UNIDADE') novaLinha[i] = produto.unidade;
     else if (hUpper === 'ESTOQUE MINIMO') novaLinha[i] = produto.estoqueMinimo;
-    else if (hUpper === 'ESTOQUE ATUAL' && !produto.ID) novaLinha[i] = 0;
+    
+    // CORREÇÃO: Agora ele lê a variável "estoqueAtual" enviada pela tela
+    else if (hUpper === 'ESTOQUE ATUAL') novaLinha[i] = produto.estoqueAtual || 0; 
+    
     else if (hUpper === 'CUSTO') novaLinha[i] = produto.custo || 0;
     else if (hUpper === 'PRECO' || hUpper === 'PREÇO') novaLinha[i] = produto.preco || 0;
   });
+  
   if (linhaExistente > 1) sheet.getRange(linhaExistente, 1, 1, novaLinha.length).setValues([novaLinha]);
   else sheet.appendRow(novaLinha);
 }
