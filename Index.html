@@ -508,23 +508,26 @@ function renderizarGraficos(graficos) {
   
 
  // ==================== FINANCEIRO ====================
-// ==================== FINANCEIRO ====================
-  function carregarFinanceiro() {
-    // Limpa a barra de pesquisa
+function carregarFinanceiro() {
     const inputBusca = document.getElementById('buscaFinanceiroGlob');
     if (inputBusca) inputBusca.value = '';
     
     const tbody = document.querySelector('#tabelaFinanceiro tbody');
     if(tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Carregando todos os lançamentos...</td></tr>';
     
-    // Passa null para trazer TUDO do banco, sem depender de filtros de tela
-    google.script.run.withSuccessHandler(ts => { 
-      dadosFinanceirosAtuais = ts || []; 
-      renderizarTabelaFinanceiro(dadosFinanceirosAtuais); 
-    }).getDadosFinanceiros(null, null, null);
+    google.script.run
+      .withSuccessHandler(ts => { 
+        dadosFinanceirosAtuais = ts || []; 
+        renderizarTabelaFinanceiro(dadosFinanceirosAtuais); 
+      })
+      .withFailureHandler(err => {
+        // Agora ele te avisa na cara do gol se der erro
+        if(tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:red; font-weight:bold;">Erro: ${err.message}</td></tr>`;
+      })
+      .getDadosFinanceiros(null, null, null);
   }
-
-  function renderizarTabelaFinanceiro(dados) {
+  
+ function renderizarTabelaFinanceiro(dados) {
     const tbody = document.querySelector('#tabelaFinanceiro tbody');
     if(!tbody) return;
     tbody.innerHTML = '';
@@ -535,7 +538,6 @@ function renderizarGraficos(graficos) {
     }
     
     dados.forEach(t => {
-       // O botão de editar agora usa a linha real da planilha (t.linha)
        tbody.innerHTML += `<tr>
          <td>${t.data || '-'}</td>
          <td><b>${t.cliente || '-'}</b></td>
@@ -543,22 +545,25 @@ function renderizarGraficos(graficos) {
          <td>${t.barbeiro || '-'}</td>
          <td><span class="status-badge">${t.forma || '-'}</span></td>
          <td style="color:#059669; font-weight:bold;">R$ ${parseFloat(t.valor || 0).toFixed(2)}</td>
-         <td><button class="btn btn-outline btn-sm" onclick="abrirEdicaoFinanceiro(${t.linha})"><i class="fas fa-edit"></i></button></td>
+         <td style="display: flex; gap: 6px;">
+            <button class="btn btn-outline btn-sm" onclick="abrirEdicaoFinanceiro(${t.linha})"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-outline btn-sm" style="color:#ef4444; border-color:#fca5a5;" onclick="excluirFinanceiro(${t.linha}, '${t.id || ''}')"><i class="fas fa-trash"></i></button>
+         </td>
        </tr>`;
     });
   }
 
-  function filtrarTabelaFinanceiroLocal() {
+ function filtrarTabelaFinanceiroLocal() {
     const term = document.getElementById('buscaFinanceiroGlob').value.toLowerCase();
     if(!dadosFinanceirosAtuais) return;
     
-    // Pesquisa dinamicamente em qualquer campo sem precisar recarregar
+    // BLINDAGEM: Garante que é tudo texto para não estourar erro do "toLowerCase"
     const filtrados = dadosFinanceirosAtuais.filter(t => 
-      (t.cliente || '').toLowerCase().includes(term) || 
-      (t.servico || '').toLowerCase().includes(term) || 
-      (t.forma || '').toLowerCase().includes(term) ||
-      (t.barbeiro || '').toLowerCase().includes(term) ||
-      (t.data || '').toLowerCase().includes(term)
+      String(t.cliente || '').toLowerCase().includes(term) || 
+      String(t.servico || '').toLowerCase().includes(term) || 
+      String(t.forma || '').toLowerCase().includes(term) ||
+      String(t.barbeiro || '').toLowerCase().includes(term) ||
+      String(t.data || '').toLowerCase().includes(term)
     );
     
     renderizarTabelaFinanceiro(filtrados);
@@ -586,6 +591,56 @@ function renderizarGraficos(graficos) {
     Swal.fire({ title: 'Atualizando...', didOpen: () => Swal.showLoading() });
     google.script.run.withSuccessHandler(() => { fecharModal('modalEditarFinanceiro'); Swal.fire('Salvo', '', 'success'); carregarFinanceiro(); }).atualizarEdicaoFinanceiro(dados);
   });
+
+  window.excluirFinanceiro = async function(linha, idControle) {
+    const { isConfirmed } = await Swal.fire({
+      title: 'Excluir Lançamento?',
+      text: 'O valor será apagado do financeiro.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      confirmButtonText: 'Sim, excluir'
+    });
+
+    if (isConfirmed) {
+      Swal.fire({ title: 'Excluindo...', didOpen: () => Swal.showLoading() });
+
+      google.script.run.withSuccessHandler(async (res) => {
+        if (res.success) {
+          // Se o lançamento pertencia à agenda, dispara o segundo aviso
+          if (res.temAgenda) {
+            const resAgenda = await Swal.fire({
+              title: 'Atenção na Agenda!',
+              text: 'O status na agenda voltou para "Agendado". Deseja excluir também o agendamento?',
+              icon: 'question',
+              showCancelButton: true,
+              confirmButtonColor: '#ef4444',
+              cancelButtonText: 'Não, manter agendado',
+              confirmButtonText: 'Sim, excluir agendamento'
+            });
+
+            if (resAgenda.isConfirmed) {
+              Swal.fire({ title: 'Excluindo da Agenda...', didOpen: () => Swal.showLoading() });
+              google.script.run.withSuccessHandler(() => {
+                Swal.fire('Totalmente Excluído!', 'Financeiro e Agenda apagados.', 'success');
+                carregarFinanceiro();
+                carregarDadosAgenda(); 
+              }).excluirAgendamento(res.idAgenda, usuarioAtual.nome);
+              return; // Para aqui, pois já mandou excluir a agenda
+            }
+          }
+          
+          // Se não tiver agenda associada ou o usuário optou por "Não"
+          Swal.fire('Financeiro Excluído!', '', 'success');
+          carregarFinanceiro();
+          carregarDadosAgenda(); // Sempre atualiza pra garantir o status real
+        } else {
+          Swal.fire('Erro', res.msg || 'Falha ao excluir.', 'error');
+        }
+      }).excluirLancamentoFinanceiro(linha, idControle);
+    }
+  };
+
 
   // ==================== PDV / VENDAS E ESTOQUE ====================
   function carregarProdutosVenda() {
