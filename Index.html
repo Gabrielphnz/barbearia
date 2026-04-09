@@ -393,79 +393,93 @@
   function salvarTodasConfiguracoes() { Swal.fire({ title: 'Salvando...', didOpen: () => Swal.showLoading() }); google.script.run.withSuccessHandler(() => { Swal.fire('Salvo!', '', 'success'); carregarConfigData(); }).salvarConfiguracoesAPI(configData); }
 
   // ==================== DASHBOARD & GRÁFICOS ====================
-  function carregarDashboard() {
+ function carregarDashboard() {
     google.script.run.withSuccessHandler(dados => {
       document.getElementById('dashFatHoje').innerText = `R$ ${dados.faturamentoHoje.toFixed(2).replace('.',',')}`;
       document.getElementById('dashFatMes').innerText = `R$ ${dados.faturamentoMes.toFixed(2).replace('.',',')}`;
-      document.getElementById('dashCliMes').innerText = dados.clientesUnicosMes;
+      
+      const elCli = document.getElementById('dashCliMes');
+      if(elCli) elCli.innerText = dados.clientesUnicosMes || 0;
+      
       document.getElementById('dashTicket').innerText = `R$ ${dados.ticketMedio.toFixed(2).replace('.',',')}`;
-      if(dados.graficos) renderizarGraficos(dados.graficos);
+      
+      // Só tenta renderizar se a variável graficos existir
+      if(dados.graficos) {
+        renderizarGraficos(dados.graficos);
+      }
     }).getMetricasDashboard();
   }
 
-  function renderizarGraficos(graficos) {
-  // Destroi instâncias anteriores para evitar sobreposição
-  if (window.chartInst1) window.chartInst1.destroy();
-  if (window.chartInst2) window.chartInst2.destroy();
-  if (window.chartInst3) window.chartInst3.destroy();
-
-  // 1. Gráfico de linha (faturamento mensal)
-  const ctx1 = document.getElementById('chartFaturamento')?.getContext('2d');
-  if (ctx1) {
-    const labels = graficos?.faturamentoMensal?.labels || [];
-    const dados = (graficos?.faturamentoMensal?.dados || []).map(v => typeof v === 'number' ? v : 0);
-    window.chartInst1 = new Chart(ctx1, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{ label: 'Faturamento (R$)', data: dados, borderColor: '#667eea', backgroundColor: 'rgba(102,126,234,0.1)', fill: true, tension: 0.3 }]
-      },
-      options: { responsive: true, maintainAspectRatio: false }
-    });
-  }
-
-  // 2. Gráfico de pizza (serviços) – tratamento especial contra infinito
-  const ctx2 = document.getElementById('chartServicos')?.getContext('2d');
-  if (ctx2) {
-    let labels = graficos?.topServicos?.labels || [];
-    let dados = (graficos?.topServicos?.dados || []).map(v => {
-      let num = Number(v);
-      return isNaN(num) || !isFinite(num) ? 0 : num;
-    });
-    // Remove entradas com valor zero para não aparecerem no gráfico
-    const filtered = labels.reduce((acc, label, idx) => {
-      if (dados[idx] > 0) {
-        acc.labels.push(label);
-        acc.dados.push(dados[idx]);
-      }
-      return acc;
-    }, { labels: [], dados: [] });
-    
-    if (filtered.labels.length === 0) {
-      filtered.labels = ['Sem dados'];
-      filtered.dados = [1];
+ function renderizarGraficos(graficos) {
+    // Blindagem anti-crash: se a biblioteca não carregar, ele aborta em silêncio
+    if (typeof Chart === 'undefined') {
+      console.warn("Biblioteca de gráficos não carregada.");
+      return;
     }
-    
-    window.chartInst2 = new Chart(ctx2, {
-      type: 'doughnut',
-      data: { labels: filtered.labels, datasets: [{ data: filtered.dados, backgroundColor: ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6'] }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-    });
-  }
+    if (!graficos) return;
 
-  // 3. Gráfico de barbeiros
-  const ctx3 = document.getElementById('chartBarbeiros')?.getContext('2d');
-  if (ctx3) {
-    const labels = graficos?.topBarbeiros?.labels || [];
-    const dados = (graficos?.topBarbeiros?.dados || []).map(v => typeof v === 'number' ? v : 0);
-    window.chartInst3 = new Chart(ctx3, {
-      type: 'bar',
-      data: { labels: labels, datasets: [{ label: 'Faturamento (R$)', data: dados, backgroundColor: '#3b82f6' }] },
-      options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
-    });
-  }
-}
+    // Destrói os gráficos antigos antes de desenhar novos (evita sobreposição)
+    if(window.chartInst1) window.chartInst1.destroy(); 
+    if(window.chartInst2) window.chartInst2.destroy(); 
+    if(window.chartInst3) window.chartInst3.destroy();
 
+    // 1. Gráfico de Faturamento (Linha)
+    const cv1 = document.getElementById('chartFaturamento');
+    if (cv1 && graficos.faturamentoMensal) {
+      window.chartInst1 = new Chart(cv1.getContext('2d'), { 
+        type: 'line', 
+        data: { 
+          labels: graficos.faturamentoMensal.labels, 
+          datasets: [{ label: 'Faturamento (R$)', data: graficos.faturamentoMensal.dados, borderColor: '#667eea', backgroundColor: 'rgba(102, 126, 234, 0.1)', fill: true, tension: 0.3 }] 
+        }, 
+        options: { responsive: true, plugins: { legend: { display: false } } } 
+      });
+    }
+
+    // 2. Gráfico de pizza (serviços) – O SEU CÓDIGO EXCELENTE
+    const cv2 = document.getElementById('chartServicos');
+    if (cv2 && graficos.topServicos) {
+      let labels = graficos.topServicos.labels || [];
+      let dados = (graficos.topServicos.dados || []).map(v => {
+        let num = Number(v);
+        return isNaN(num) || !isFinite(num) ? 0 : num;
+      });
+      
+      // Remove entradas com valor zero
+      const filtered = labels.reduce((acc, label, idx) => {
+        if (dados[idx] > 0) {
+          acc.labels.push(label);
+          acc.dados.push(dados[idx]);
+        }
+        return acc;
+      }, { labels: [], dados: [] });
+      
+      // Fallback se não tiver vendas
+      if (filtered.labels.length === 0) {
+        filtered.labels = ['Sem dados'];
+        filtered.dados = [1];
+      }
+      
+      window.chartInst2 = new Chart(cv2.getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: filtered.labels, datasets: [{ data: filtered.dados, backgroundColor: ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6', '#94a3b8'] }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+
+    // 3. Gráfico de barbeiros – O SEU CÓDIGO EXCELENTE
+    const cv3 = document.getElementById('chartBarbeiros');
+    if (cv3 && graficos.topBarbeiros) {
+      const labels = graficos.topBarbeiros.labels || [];
+      const dados = (graficos.topBarbeiros.dados || []).map(v => typeof v === 'number' ? v : 0);
+      window.chartInst3 = new Chart(cv3.getContext('2d'), {
+        type: 'bar',
+        data: { labels: labels, datasets: [{ label: 'Faturamento (R$)', data: dados, backgroundColor: '#3b82f6' }] },
+        options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
+  }
+  
 
   // ==================== FINANCEIRO ====================
   let dadosFinanceirosAtuais = [];
