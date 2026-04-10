@@ -132,14 +132,162 @@
       border-color: #667eea;
     }
     .calendario-vazio { background: transparent; border: none; }
+  
+/* ============================================================
+   ESTILOS EXCLUSIVOS PARA CELULAR (BREAKPOINT 768px)
+   Não altera nada no visual de computador/tablet paisagem.
+============================================================ */
+@media (max-width: 768px) {
+  
+  /* 1. LAYOUT GERAL E SIDEBAR */
+  .app-container {
+    display: block; /* Tira o flex para empilhar header e conteúdo */
+  }
+
+  /* Transforma a sidebar fixa num menu lateral que desliza */
+  .sidebar {
+    width: 280px;
+    height: 100vh;
+    margin: 0;
+    border-radius: 0 24px 24px 0; /* Arredonda só o canto direito */
+    position: fixed;
+    top: 0;
+    left: -290px; /* Esconde o menu para a esquerda */
+    z-index: 9999; /* Fica em cima de tudo */
+    transition: left 0.3s ease; /* Animação suave ao abrir */
+    box-shadow: 5px 0 15px rgba(0,0,0,0.1);
+  }
+
+  /* Classe que o Javascript vai adicionar para abrir o menu */
+  .sidebar.open {
+    left: 0; /* Traz o menu para a tela */
+  }
+  
+  /* Ajusta a área principal para ocupar a tela toda */
+  .main-content {
+    margin-left: 0;
+    padding: 10px; /* Reduz o respiro nas laterais */
+    margin-top: 60px; /* Espaço para o header mobile no topo */
+  }
+
+  /* 2. HEADER MOBILE (Obrigatório adicionar no HTML) */
+  /* Cria uma barra fixa no topo que só aparece no celular */
+  .mobile-header {
+    display: flex !important; /* Força aparecer */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 60px;
+    background: white;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    z-index: 9990;
+    align-items: center;
+    padding: 0 15px;
+    justify-content: space-between;
+  }
+  
+  /* Esconde o logo original da sidebar no mobile e usa o do header */
+  .sidebar .logo-area {
+    display: none;
+  }
+  
+  .mobile-header h1 {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  
+  .menu-toggle {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #475569;
+    cursor: pointer;
+    padding: 5px;
+  }
+
+  /* 3. GRIDS E FORMULÁRIOS - EMPILHAMENTO VAI AQUI */
+  /* Dashboard, Cards de Faturamento, Gráficos, Formulários: tudo vira 1 coluna */
+  .dashboard-grid, 
+  .charts-grid, 
+  .form-grid, 
+  .ficha-stats-grid, 
+  .dados-pessoais-grid {
+    grid-template-columns: 1fr !important; /* Força uma única coluna */
+    gap: 15px;
+  }
+  
+  /* Ajusta campos full-width para não quebrarem */
+  .full-width {
+    grid-column: span 1;
+  }
+  
+  /* Ajusta altura dos gráficos no mobile para não ficarem gigantes */
+  .chart-container {
+    height: 300px;
+  }
+
+  /* 4. TABELAS - ROLAGEM HORIZONTAL */
+  /* Adiciona rolagem automática nas tabelas para não espremer o texto */
+  .card, 
+  div[style*="overflow-x: auto;"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch; /* Rolagem suave no iOS */
+  }
+  
+  table {
+    min-width: 600px; /* Garante que a tabela tenha um tamanho mínimo para rolar */
+  }
+
+  /* 5. AJUSTES ESPECÍFICOS (AGENDA E MODAIS) */
+  /* Agenda toolbar empilha os filtros */
+  .agenda-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .agenda-toolbar button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Modais ocupam quase a tela toda no mobile */
+  .modal-content {
+    padding: 20px;
+    width: 95%;
+    margin: 10px auto;
+  }
+  
+  /* Ajuste para o novo design de checkout que fizemos */
+  .swal2-popup {
+    width: 90% !important;
+    font-size: 14px;
+  }
+}
+
+/* Esconde o header mobile por padrão no desktop */
+.mobile-header {
+  display: none;
+}
+
   </style>
 </head>
 <body>
 
+<div class="mobile-header">
+  <div style="display:flex; align-items:center; gap:10px;">
+    <button class="menu-toggle" onclick="toggleMobileMenu()">
+      <i class="fas fa-bars"></i> </button>
+    <i class="fas fa-cut" style="color:#667eea; font-size:20px;"></i>
+    <h1>Barbearia</h1>
+  </div>
+  <div id="userInitialsMobile" style="background:#e2e8f0; width:35px; height:35px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; color:#475569; font-size:14px;">U</div>
+</div>
+
 <div id="loginScreen">
   <div class="login-card">
     <i class="fas fa-cut" style="font-size: 48px; color: #667eea; margin-bottom: 20px;"></i>
-    <h2 style="margin-bottom: 20px;">Barbearia Manager</h2>
+    <h2 style="margin-bottom: 20px;">Barbearia Vitrine Do Homem</h2>
     <input type="text" id="loginUser" placeholder="Usuário">
     <input type="password" id="loginPass" placeholder="Senha">
     <button class="btn btn-primary" style="width:100%" onclick="fazerLogin()">Entrar no Sistema</button>
@@ -943,6 +1091,22 @@ function editarProduto(id) {
     }
   }
 
+// ==================== CONTROLE DO MENU MOBILE ====================
+  function toggleMobileMenu() {
+    // Adiciona ou remove a classe 'open' na sidebar. O CSS faz o resto.
+    document.getElementById('sidebar').classList.toggle('open');
+  }
+
+  // Ajuste para fechar o menu automaticamente quando clicar em uma aba no mobile
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', function() {
+      // Se tiver no mobile (classe open existir), fecha o menu ao clicar
+      if (document.getElementById('sidebar').classList.contains('open')) {
+        toggleMobileMenu();
+      }
+      mostrarPagina(this.dataset.page);
+    });
+  });
 
   function abrirModalAgendamento() { document.getElementById('formAgendamento').reset(); document.getElementById('agendaId').value=''; document.getElementById('agendaData').value=document.getElementById('filtroData').value; document.getElementById('modalAgendamento').style.display='flex'; }
   window.editarAgendamento = (ag) => { document.getElementById('agendaId').value=ag.id; document.getElementById('agendaData').value=ag.data; document.getElementById('agendaHora').value=ag.hora; document.getElementById('agendaCliente').value=ag.cliente; document.getElementById('agendaCelular').value=ag.celular; document.getElementById('agendaBarbeiro').value=ag.barbeiro; document.getElementById('agendaServico').value=ag.servico; document.getElementById('agendaStatus').value=ag.status; document.getElementById('agendaObs').value=ag.obs; document.getElementById('modalAgendamento').style.display='flex'; };
