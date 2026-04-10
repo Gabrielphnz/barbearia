@@ -369,6 +369,8 @@
   </div>
 </div>
 
+
+
 <script>
   let usuarioAtual = { nome: '', nivel: '' };
   let todosAgendamentos = [];
@@ -672,7 +674,7 @@ function carregarFinanceiro() {
       }).excluirLancamentoFinanceiro(linha, idControle);
     }
   };
-  
+
 
   // ==================== PDV / VENDAS E ESTOQUE ====================
   function carregarProdutosVenda() {
@@ -988,6 +990,44 @@ function editarProduto(id) {
       // Pega o nome da página (agenda, financeiro, vendas) e troca a tela
       mostrarPagina(this.dataset.page);
     });
+  });
+
+  // ==================== SALVAR AGENDAMENTO ====================
+  document.getElementById('formAgendamento').addEventListener('submit', (e) => {
+    e.preventDefault(); // <--- É ESTA LINHA QUE IMPEDE A TELA BRANCA!
+
+    const nomeCliente = document.getElementById('agendaCliente').value.trim();
+    
+    // Trava de segurança: Garante que o cliente existe na base de dados
+    if (!listaDeClientes.find(c => String(c.Nome || c.Cliente || '').toLowerCase() === nomeCliente.toLowerCase())) {
+      return Swal.fire('Atenção', 'Selecione um cliente válido da lista ou cadastre um novo!', 'warning');
+    }
+
+    const ag = {
+      id: document.getElementById('agendaId').value,
+      data: document.getElementById('agendaData').value,
+      hora: document.getElementById('agendaHora').value,
+      cliente: nomeCliente,
+      celular: document.getElementById('agendaCelular').value,
+      barbeiro: document.getElementById('agendaBarbeiro').value,
+      servico: document.getElementById('agendaServico').value,
+      status: document.getElementById('agendaStatus').value,
+      obs: document.getElementById('agendaObs').value
+    };
+
+    // Se você já marcar como 'Concluído' na hora de salvar, ele já chama a tela de cobrar
+    if (ag.status === 'Concluído') {
+      fecharModal('modalAgendamento');
+      return abrirCheckout(ag);
+    }
+
+    // Se for 'Agendado', salva direto
+    Swal.fire({ title: 'Salvando...', didOpen: () => Swal.showLoading() });
+    google.script.run.withSuccessHandler(() => {
+      fecharModal('modalAgendamento');
+      Swal.fire('Salvo!', '', 'success');
+      carregarDadosAgenda();
+    }).salvarAgendamento(ag, usuarioAtual.nome);
   });
 
 </script>
