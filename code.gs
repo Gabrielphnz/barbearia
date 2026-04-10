@@ -673,7 +673,8 @@ function registrarEvolucao(cliente, barbeiro, estilo, observacoes) {
 
 // ==================== FINALIZAÇÃO COM CHECKOUT E EVOLUÇÃO ====================
 function finalizarAgendamentoCheckout(dados, usuario) {
-  const sheetAgenda = getSheetAgenda();
+  // CORREÇÃO: Usar a chamada direta da folha de cálculo em vez de uma função inexistente
+  const sheetAgenda = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.AGENDA);
   if (!sheetAgenda) return { success: false, msg: 'Aba Agenda não encontrada' };
   
   const dataAgenda = sheetAgenda.getDataRange().getValues();
@@ -712,13 +713,11 @@ function finalizarAgendamentoCheckout(dados, usuario) {
             else if (h === 'ID CONTROLE') novaLinha[idx] = idControle;
             else if (h === 'USUÁRIO') novaLinha[idx] = usuario;
           });
-          
           sheetFin.appendRow(novaLinha);
         }
 
         // 3. GRAVA NA EVOLUÇÃO DO CLIENTE!
         registrarEvolucao(dados.cliente, dados.barbeiro, dados.servico, obs);
-
         break;
       }
     }
