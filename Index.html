@@ -933,8 +933,8 @@ function editarProduto(id) {
   window.editarAgendamento = (ag) => { document.getElementById('agendaId').value=ag.id; document.getElementById('agendaData').value=ag.data; document.getElementById('agendaHora').value=ag.hora; document.getElementById('agendaCliente').value=ag.cliente; document.getElementById('agendaCelular').value=ag.celular; document.getElementById('agendaBarbeiro').value=ag.barbeiro; document.getElementById('agendaServico').value=ag.servico; document.getElementById('agendaStatus').value=ag.status; document.getElementById('agendaObs').value=ag.obs; document.getElementById('modalAgendamento').style.display='flex'; };
   window.deletarAgendamento = async (id) => { const { isConfirmed } = await Swal.fire({ title: 'Excluir?', icon: 'warning', showCancelButton: true }); if(isConfirmed) { google.script.run.withSuccessHandler(()=>{carregarDadosAgenda();}).excluirAgendamento(id, usuarioAtual.nome); } };
   
- window.abrirCheckout = async function(ag) {
-    // 1. O sistema caça o preço do serviço do cliente lá nas configurações
+window.abrirCheckout = async function(ag) {
+    // 1. O sistema procura o preço do serviço do cliente nas configurações
     let precoSugerido = 0;
     const servicoConfig = configData.precos.find(p => p.tipo.toLowerCase() === (ag.servico || '').toLowerCase());
     if (servicoConfig) precoSugerido = servicoConfig.preco;
@@ -943,23 +943,39 @@ function editarProduto(id) {
     let optionsPagamento = configData.formasPagamento.map(f => `<option value="${f}">${f}</option>`).join('');
 
     const { value: formValues } = await Swal.fire({
-      title: 'Finalizar Atendimento',
+      title: '<i class="fas fa-check-circle" style="color:#10b981;"></i> Finalizar Atendimento',
       html: `
-        <div style="text-align:left;">
-          <p><b>Cliente:</b> ${ag.cliente}</p>
-          <p><b>Serviço:</b> ${ag.servico}</p>
-          <hr style="margin: 10px 0;">
-          <label style="font-weight:bold; font-size:13px;">Valor Cobrado (R$):</label>
-          <input id="swal-valor" class="swal2-input" type="number" step="0.01" value="${precoSugerido}" style="width:90%;">
-          <label style="font-weight:bold; font-size:13px; margin-top:10px; display:block;">Forma de Pagamento:</label>
-          <select id="swal-forma" class="swal2-select" style="width:90%; padding:10px;">
-            ${optionsPagamento}
-          </select>
+        <div style="text-align: left; background: #f8fafc; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; margin-top: 10px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span style="color: #64748b; font-size: 13px;">Cliente</span>
+            <span style="font-weight: 600; color: #1e293b;">${ag.cliente}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 16px;">
+            <span style="color: #64748b; font-size: 13px;">Serviço</span>
+            <span style="font-weight: 600; color: #667eea;">${ag.servico}</span>
+          </div>
+          <hr style="border: 0; border-top: 1px dashed #cbd5e1; margin: 16px 0;">
+          
+          <div style="margin-bottom: 12px;">
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px;">Valor a Cobrar (R$)</label>
+            <input id="swal-valor" type="number" step="0.01" value="${precoSugerido.toFixed(2)}" style="width: 100%; padding: 12px 16px; border: 2px solid #10b981; border-radius: 10px; font-size: 18px; font-weight: bold; color: #10b981; outline: none; text-align: center; background: white;">
+          </div>
+          
+          <div>
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px;">Forma de Pagamento</label>
+            <select id="swal-forma" style="width: 100%; padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; outline: none; background: white; color: #1e293b;">
+              ${optionsPagamento}
+            </select>
+          </div>
         </div>
       `,
-      focusConfirm: false,
       showCancelButton: true,
-      confirmButtonText: 'Confirmar e Receber',
+      confirmButtonText: '<i class="fas fa-wallet"></i> Confirmar Recebimento',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#64748b',
+      width: '450px',
+      focusConfirm: false,
       preConfirm: () => {
         return {
           valor: document.getElementById('swal-valor').value,
@@ -971,16 +987,22 @@ function editarProduto(id) {
     if (formValues) {
       if (!formValues.valor || !formValues.forma) return Swal.fire('Atenção', 'Preencha o valor e a forma de pagamento.', 'warning');
       
-      Swal.fire({ title: 'Recebendo...', didOpen: () => Swal.showLoading() });
+      // Adicionado um "Failure Handler" para que, caso haja erro no futuro, ele o avise em vez de ficar num loop eterno
+      Swal.fire({ title: 'Processando pagamento...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
       
-      // Envia os dados finalizados para dar baixa na agenda e entrar no caixa
       const dadosFechamento = { id: ag.id, cliente: ag.cliente, servico: ag.servico, barbeiro: ag.barbeiro, valor: parseFloat(formValues.valor), forma: formValues.forma };
-      google.script.run.withSuccessHandler(() => {
-        Swal.fire('Atendimento Concluído!', 'O valor já está no caixa.', 'success');
-        carregarDadosAgenda();
-        carregarFinanceiro();
-        carregarDashboard();
-      }).finalizarAgendamentoCheckout(dadosFechamento, usuarioAtual.nome);
+      
+      google.script.run
+        .withSuccessHandler(() => {
+          Swal.fire('Recebido!', 'O valor já está no caixa e no histórico do cliente.', 'success');
+          carregarDadosAgenda();
+          carregarFinanceiro();
+          carregarDashboard();
+        })
+        .withFailureHandler(err => {
+          Swal.fire('Erro do Sistema', err.message, 'error');
+        })
+        .finalizarAgendamentoCheckout(dadosFechamento, usuarioAtual.nome);
     }
   };
   
