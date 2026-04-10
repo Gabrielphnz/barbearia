@@ -441,7 +441,7 @@ function getProdutos() {
   return produtos;
 }
 
-// NOVA FUNÇÃO: Realiza a Venda do Produto
+// NOVA FUNÇÃO: Realiza a Venda do Produto (CORRIGIDA)
 function realizarVendaProduto(venda, usuario) {
   const sheetProd = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
   const produtos = getProdutos();
@@ -449,16 +449,16 @@ function realizarVendaProduto(venda, usuario) {
   
   if (idxProd !== -1) {
     const linha = idxProd + 2;
-    // Localiza as colunas cruciais
     const headers = sheetProd.getRange(1, 1, 1, sheetProd.getLastColumn()).getValues()[0].map(h => String(h).toUpperCase().trim());
     const colAtual = headers.indexOf('ESTOQUE ATUAL') + 1;
     
+    // 1. Baixa no Estoque
     if (colAtual > 0) {
       const qtdAtual = parseFloat(sheetProd.getRange(linha, colAtual).getValue()) || 0;
       sheetProd.getRange(linha, colAtual).setValue(qtdAtual - venda.quantidade);
     }
     
-    // Registra Movimento
+    // 2. Registra Movimento
     const sheetMov = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_MOV);
     if (sheetMov) {
       sheetMov.appendRow([
@@ -466,43 +466,37 @@ function realizarVendaProduto(venda, usuario) {
       ]);
     }
     
-    // Lança no Financeiro
-    lancarNoFinanceiro({
-      data: venda.data,
-      cliente: 'Venda Avulsa',
-      barbeiro: venda.barbeiro,
-      servico: 'Produto: ' + venda.produto,
-      formaPagamento: venda.formaPagamento,
-      valorLancamento: venda.total,
-      obs: `${venda.quantidade}x ${venda.produto}`
-    }, usuario);
-    
+    // 3. --- Lança no Financeiro APENAS UMA VEZ ---
     const sheetFin = getSheetFinanceiro();
     if (sheetFin) {
       const headersFin = sheetFin.getRange(1, 1, 1, sheetFin.getLastColumn()).getValues()[0].map(h => String(h).toUpperCase().trim());
       const novaLinhaFin = new Array(headersFin.length).fill('');
+      
+      // Define se usa o nome do cliente ou "Venda Avulsa"
+      let nomeClienteFinanceiro = venda.cliente && venda.cliente.trim() !== '' ? venda.cliente : 'Venda Avulsa';
+
       headersFin.forEach((h, idx) => {
         if (h === 'DATA') novaLinhaFin[idx] = new Date(venda.data + 'T12:00:00'); // Evita bug de timezone
         else if (h.includes('VALOR')) novaLinhaFin[idx] = parseFloat(venda.total);
-        else if (h === 'TIPO DE CORTE' || h === 'SERVICO') novaLinhaFin[idx] = venda.produto;
+        else if (h === 'TIPO DE CORTE' || h === 'SERVICO') novaLinhaFin[idx] = 'Produto: ' + venda.produto;
         else if (h.includes('FORMA DE PAG')) novaLinhaFin[idx] = venda.formaPagamento;
         else if (h === 'BARBEIRO') novaLinhaFin[idx] = venda.barbeiro;
-        else if (h === 'CLIENTES' || h === 'CLIENTE') novaLinhaFin[idx] = venda.cliente || '';
+        else if (h === 'CLIENTES' || h === 'CLIENTE') novaLinhaFin[idx] = nomeClienteFinanceiro;
         else if (h === 'USUÁRIO') novaLinhaFin[idx] = usuario;
+        else if (h === 'OBS' || h.includes('OBSERVA')) novaLinhaFin[idx] = `${venda.quantidade}x ${venda.produto}`;
       });
       sheetFin.appendRow(novaLinhaFin);
     }
     
-    // --- NOVO: REGISTRO NA EVOLUÇÃO (FICHA DO CLIENTE) ---
-    // Se a venda teve um cliente selecionado, envia pro histórico
+    // 4. --- Registro na Evolução (Ficha do Cliente) ---
+    // Se a venda teve um cliente selecionado, envia para o histórico
     if (venda.cliente && venda.cliente.trim() !== '') {
         const obsVenda = `Compra de Produto PDV: ${venda.quantidade}x`;
         registrarEvolucao(venda.cliente, venda.barbeiro, venda.produto, obsVenda);
     }
 
     return { success: true };
-    
-      }
+  }
   return { success: false, msg: 'Produto não encontrado' };
 }
 
@@ -617,10 +611,20 @@ function getMetricasDashboard() {
   };
 }
 
-// NOVO: Exclusão de Financeiro integrada com Agenda
+// NOVO: Exclusão de Financeiro integrada com Agenda e Estoque
 function excluirLancamentoFinanceiro(linha, idControle) {
   const sheetFin = getSheetFinanceiro();
   if (!sheetFin) return { success: false, msg: 'Aba financeiro não encontrada' };
+
+  // 0. Capturar dados da linha a ser excluída ANTES de apagar
+  const colunasData = sheetFin.getRange(linha, 1, 1, sheetFin.getLastColumn()).getValues()[0];
+  const headersFin = sheetFin.getRange(1, 1, 1, sheetFin.getLastColumn()).getValues()[0].map(h => String(h).toUpperCase().trim());
+  
+  const idxServico = headersFin.indexOf('SERVICO') > -1 ? headersFin.indexOf('SERVICO') : headersFin.indexOf('TIPO DE CORTE');
+  const idxValor = headersFin.indexOf('VALOR') > -1 ? headersFin.indexOf('VALOR') : headersFin.indexOf('VALOR (R$)');
+  
+  const nomeItem = idxServico > -1 ? colunasData[idxServico] : '';
+  const valorExcluido = idxValor > -1 ? parseFloat(colunasData[idxValor]) : 0;
 
   // 1. Deleta a linha do financeiro
   sheetFin.deleteRow(linha);
@@ -637,10 +641,8 @@ function excluirLancamentoFinanceiro(linha, idControle) {
       const colStatus = headersAgenda.indexOf('STATUS');
 
       if (colId !== -1 && colStatus !== -1) {
-        // i = 1 para pular o cabeçalho
         for (let i = 1; i < dataAgenda.length; i++) {
           if (String(dataAgenda[i][colId]) === String(idControle)) {
-            // Reverte o status
             sheetAgenda.getRange(i + 1, colStatus + 1).setValue('Agendado');
             temAgenda = true;
             break;
@@ -648,6 +650,38 @@ function excluirLancamentoFinanceiro(linha, idControle) {
         }
       }
     }
+  } else if (nomeItem) {
+     // 3. SE NÃO VEIO DA AGENDA, VERIFICAR SE É PRODUTO PARA DEVOLVER AO ESTOQUE
+     const sheetEstoque = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.ESTOQUE_PRODUTOS);
+     if (sheetEstoque) {
+         const dataEstoque = sheetEstoque.getDataRange().getValues();
+         const headersEstoque = dataEstoque[0].map(h => String(h).toUpperCase().trim());
+         const colProduto = headersEstoque.indexOf('PRODUTO');
+         const colEstoqueAtual = headersEstoque.indexOf('ESTOQUE ATUAL');
+         const colPreco = headersEstoque.indexOf('PRECO') > -1 ? headersEstoque.indexOf('PRECO') : headersEstoque.indexOf('PREÇO');
+
+         if (colProduto !== -1 && colEstoqueAtual !== -1 && colPreco !== -1) {
+             for (let i = 1; i < dataEstoque.length; i++) {
+                 let nomeExcluido = String(nomeItem).trim().toUpperCase(); // Ex: "PRODUTO: CAMISA"
+                 let nomeEstoque = String(dataEstoque[i][colProduto]).trim().toUpperCase(); // Ex: "CAMISA"
+                 
+                 // Verifica se bate (O PDV salva com "Produto: " na frente)
+                 if (nomeExcluido === nomeEstoque || nomeExcluido === ("PRODUTO: " + nomeEstoque)) {
+                     
+                     // Descobre a quantidade dividindo o valor estornado pelo preço unitário
+                     let precoUnitario = parseFloat(dataEstoque[i][colPreco]) || 0;
+                     let quantidadeVendida = 1; 
+                     if (precoUnitario > 0 && valorExcluido > 0) {
+                         quantidadeVendida = Math.round(valorExcluido / precoUnitario);
+                     }
+
+                     let estoqueAnterior = parseFloat(dataEstoque[i][colEstoqueAtual]) || 0;
+                     sheetEstoque.getRange(i + 1, colEstoqueAtual + 1).setValue(estoqueAnterior + quantidadeVendida);
+                     break;
+                 }
+             }
+         }
+     }
   }
 
   return { success: true, temAgenda: temAgenda, idAgenda: idControle };
